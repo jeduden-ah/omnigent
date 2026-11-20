@@ -346,6 +346,11 @@ export interface WorkspaceFile {
   type: "file" | "directory";
   bytes: number | null;
   modified_at: number | null;
+  /**
+   * For a listed directory whose only entry is a directory, and so on: the
+   * deepest directory of that chain, when the host reports it.
+   */
+  leafDirectoryPath?: string;
 }
 
 export interface WorkspaceAllFilesResult {
@@ -1126,11 +1131,26 @@ export function useWorkspaceDirectory(
 ) {
   const serveable = useWorkspaceServeable(conversationId);
   return useQuery({
-    queryKey: ["workspace-dir", conversationId, dirPath, location],
-    queryFn: () => fetchWorkspaceDirectory(conversationId!, dirPath!, location),
+    ...workspaceDirectoryQuery(conversationId ?? "", dirPath ?? "", location),
     enabled: !!conversationId && !!dirPath && serveable !== false,
-    staleTime: 5_000,
   });
+}
+
+/** The query for one directory's listing, shared by the tree and prefetch so they share a cache. */
+export function workspaceDirectoryQuery(
+  conversationId: string,
+  dirPath: string,
+  location = "",
+  refreshToken = 0,
+) {
+  return {
+    queryKey:
+      refreshToken === 0
+        ? ["workspace-dir", conversationId, dirPath, location]
+        : ["workspace-dir", conversationId, dirPath, location, refreshToken],
+    queryFn: () => fetchWorkspaceDirectory(conversationId, dirPath, location),
+    staleTime: 5_000,
+  };
 }
 
 /** One expanded lazy directory's fetched children + load/error state. */
@@ -1181,13 +1201,8 @@ export function useWorkspaceDirectories(
   );
   return useQueries({
     queries: dirPaths.map((dirPath) => ({
-      queryKey:
-        refreshToken === 0
-          ? ["workspace-dir", conversationId, dirPath, location]
-          : ["workspace-dir", conversationId, dirPath, location, refreshToken],
-      queryFn: () => fetchWorkspaceDirectory(conversationId!, dirPath, location),
+      ...workspaceDirectoryQuery(conversationId ?? "", dirPath, location, refreshToken),
       enabled,
-      staleTime: 5_000,
     })),
     combine,
   });

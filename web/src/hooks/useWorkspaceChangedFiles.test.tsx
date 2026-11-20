@@ -44,6 +44,7 @@ import {
   useWorkspaceFileExists,
   useWorkspaceFileSearch,
   useWorkspaceServeable,
+  workspaceDirectoryQuery,
 } from "./useWorkspaceChangedFiles";
 import { goToFileSearchState, goToFileStatusMessage } from "@/shell/goToFileSearchStatus";
 
@@ -776,6 +777,25 @@ describe("useWorkspaceDirectory gating", () => {
     await flushMicrotasks();
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspaceDirectoryQuery", () => {
+  it("keys a listing as the directory hooks do, adding a refresh token only once set", () => {
+    expect(workspaceDirectoryQuery("conv", "src").queryKey).toEqual([
+      "workspace-dir",
+      "conv",
+      "src",
+      "",
+    ]);
+    expect(workspaceDirectoryQuery("conv", "src", "remote", 2).queryKey).toEqual([
+      "workspace-dir",
+      "conv",
+      "src",
+      "remote",
+      2,
+    ]);
+    expect(workspaceDirectoryQuery("conv", "src").staleTime).toBe(5_000);
   });
 });
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { scrollTabIntoView } from "./WorkspaceTabsScroller";
+import { scrollTabIntoView, scrollViewportToShow } from "./WorkspaceTabsScroller";
 
 function rect(left: number, width: number): DOMRect {
   return { left, right: left + width, width, top: 0, bottom: 20, height: 20 } as DOMRect;
@@ -66,5 +66,22 @@ describe("scrollTabIntoView", () => {
     page.append(loose);
     expect(() => scrollTabIntoView(loose)).not.toThrow();
     scrollTabIntoView(null);
+  });
+});
+
+describe("scrollViewportToShow", () => {
+  it("shows a box within the strip's visible width, when part of the strip is covered", () => {
+    const { viewport } = strip(0);
+    // The box ends at x=280: inside the strip's 200px, but past its first 150px.
+    scrollViewportToShow(viewport, rect(230, 50));
+    expect(viewport.scrollLeft).toBe(40);
+    scrollViewportToShow(viewport, rect(230, 50), 150);
+    expect(viewport.scrollLeft).toBe(70);
+  });
+
+  it("uses the strip's whole width by default, as scrollTabIntoView does", () => {
+    const { viewport } = strip(0);
+    scrollViewportToShow(viewport, rect(280, 50));
+    expect(viewport.scrollLeft).toBe(70);
   });
 });

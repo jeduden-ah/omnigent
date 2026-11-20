@@ -3165,7 +3165,7 @@ describe("Sidebar project sections", () => {
     expect(within(projectSection).getByText("conv_filed")).toBeInTheDocument();
   });
 
-  it("moves a pinned project session out into the global Pinned section", () => {
+  it("moves a globally pinned project session out into the global Pinned section", () => {
     projectsMock.push("Customer X");
     const family = { id: "family", representative_id: "conv_pinned", pinned: true };
     mockConversations([
@@ -3192,6 +3192,37 @@ describe("Sidebar project sections", () => {
     expect(within(projectSection).getByText("conv_plain")).toBeInTheDocument();
     expect(within(projectSection).queryByText("conv_pinned")).toBeNull();
     expect(within(projectSection).queryByText("conv_peer")).toBeNull();
+  });
+
+  it("keeps a project-pinned session in its project, listed first", () => {
+    projectsMock.push("Customer X");
+    const family = {
+      id: "family",
+      representative_id: "conv_pinned",
+      pinned: true,
+      pinned_at: "project:1",
+    };
+    mockConversations([
+      conv("conv_plain", "Claude Code", { labels: { omni_project: "Customer X" } }),
+      conv("conv_pinned", "Claude Code", {
+        labels: { omni_project: "Customer X", "omnigent.pinned": "project:1" },
+        family,
+      }),
+      conv("conv_peer", "Codex", { labels: { omni_project: "Customer X" }, family }),
+    ]);
+    renderSidebar();
+
+    // A project pin does not go to the global Pinned section.
+    expect(screen.queryByText("Pinned")).toBeNull();
+
+    // It stays in its project, above the unpinned sessions, with its family.
+    fireEvent.click(screen.getByRole("button", { name: /^Customer X/ }));
+    const projectSection = screen.getByText("Customer X").closest("section")!;
+    const rows = within(projectSection)
+      .getAllByText(/^conv_/)
+      .map((el) => el.textContent);
+    expect(rows).toEqual(["conv_pinned", "conv_peer", "conv_plain"]);
+    expect(screen.getAllByText("conv_pinned")).toHaveLength(1);
   });
 
   it("does not render a project section when useProjects returns nothing", () => {

@@ -6,7 +6,12 @@ import {
   type Conversation,
   type PinnedConversationsResult,
 } from "@/hooks/useConversations";
-import { PINNED_LABEL_KEY } from "@/lib/sessionListCache";
+import {
+  PINNED_LABEL_KEY,
+  parsePinValue,
+  rowPinValue,
+  type PinScope,
+} from "@/lib/sessionListCache";
 import { readPinnedConversationIds } from "./sidebarNav";
 
 /** How long the post-unpin Undo pill stays up — long enough to catch a mis-click. */
@@ -16,7 +21,12 @@ const UNPIN_UNDO_DURATION_MS = 5000;
 const UNPIN_UNDO_TOAST_ID = "unpin-undo";
 
 /** The pin toggle's `mutateAsync` (`useTogglePinnedConversation`). */
-type WritePin = (vars: { id: string; pinned: boolean; pinnedAt?: number }) => Promise<unknown>;
+type WritePin = (vars: {
+  id: string;
+  pinned: boolean;
+  pinnedAt?: number;
+  scope?: PinScope;
+}) => Promise<unknown>;
 
 /** Whether the session is pinned now, in the server pinned cache or legacy local pins. */
 function isPinnedNow(queryClient: QueryClient, id: string, previousPersonalPin?: string): boolean {
@@ -53,7 +63,7 @@ export function unpinWithUndo(
   id: string,
   before: Pick<Conversation, "title" | "labels" | "family"> | undefined,
 ): void {
-  const previous = Number(before?.family?.pinned_at ?? before?.labels?.[PINNED_LABEL_KEY]);
+  const { at: previous, scope } = parsePinValue(rowPinValue(before));
   const pinnedAt = Number.isFinite(previous) && previous > 0 ? previous : undefined;
   writePin({ id, pinned: false })
     .then(() => {
@@ -65,7 +75,7 @@ export function unpinWithUndo(
           label: "Undo",
           onClick: () => {
             if (isPinnedNow(queryClient, id, before?.labels?.[PINNED_LABEL_KEY])) return;
-            void writePin({ id, pinned: true, pinnedAt }).catch(() => {});
+            void writePin({ id, pinned: true, pinnedAt, scope }).catch(() => {});
           },
         },
         testId: "unpin-undo-toast-item",

@@ -56,6 +56,7 @@ describe("unpinWithUndo", () => {
       id: "conv_a",
       pinned: true,
       pinnedAt: 1700000000123,
+      scope: "global",
     });
     await waitFor(() => expect(screen.queryByText("Unpinned session")).not.toBeInTheDocument());
   });
@@ -88,6 +89,7 @@ describe("unpinWithUndo", () => {
       id: "conv_a",
       pinned: true,
       pinnedAt: familyPin ? 2000 : 1,
+      scope: "global",
     });
   });
 
@@ -110,7 +112,12 @@ describe("unpinWithUndo", () => {
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     });
-    expect(writePin).toHaveBeenLastCalledWith({ id: "conv_a", pinned: true, pinnedAt: undefined });
+    expect(writePin).toHaveBeenLastCalledWith({
+      id: "conv_a",
+      pinned: true,
+      pinnedAt: undefined,
+      scope: "global",
+    });
   });
 
   it.each([
@@ -164,7 +171,12 @@ describe("unpinWithUndo", () => {
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     });
-    expect(writePin).toHaveBeenLastCalledWith({ id: "conv_b", pinned: true, pinnedAt: 2 });
+    expect(writePin).toHaveBeenLastCalledWith({
+      id: "conv_b",
+      pinned: true,
+      pinnedAt: 2,
+      scope: "global",
+    });
     expect(writePin).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: "conv_a", pinned: true }),
     );

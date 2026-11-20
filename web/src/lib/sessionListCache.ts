@@ -40,6 +40,58 @@ export const PROJECT_LABEL_KEY = "omni_project";
  */
 export const PINNED_LABEL_KEY = "omnigent.pinned";
 
+/**
+ * Where a pin shows: "global" in the sidebar's Pinned section, "project" at the
+ * top of the session's own project folder. Each has its own pin limit.
+ */
+export type PinScope = "global" | "project";
+
+/** Pin label value prefix marking a project pin; an unprefixed value is a global pin. */
+const PROJECT_PIN_PREFIX = "project:";
+
+/** Split a pin label value into its scope and sort value (NaN when unparseable). */
+export function parsePinValue(raw: string | null | undefined): { scope: PinScope; at: number } {
+  if (raw?.startsWith(PROJECT_PIN_PREFIX)) {
+    const rest = raw.slice(PROJECT_PIN_PREFIX.length);
+    return { scope: "project", at: rest ? Number(rest) : NaN };
+  }
+  return { scope: "global", at: raw ? Number(raw) : NaN };
+}
+
+/** The pin label value for a sort value in a scope. */
+export function encodePinValue(at: number, scope: PinScope = "global"): string {
+  return scope === "project" ? `${PROJECT_PIN_PREFIX}${at}` : String(at);
+}
+
+/** The raw pin value a row carries: its family's pin, else its own label. */
+export function rowPinValue(
+  row: Pick<Conversation, "labels" | "family"> | undefined,
+): string | undefined {
+  return row?.family?.pinned_at ?? row?.labels?.[PINNED_LABEL_KEY] ?? undefined;
+}
+
+/** The project a row's project pin counts against: its project id, else its legacy project label. */
+export function pinProjectKey(
+  row: Pick<Conversation, "labels" | "project_id"> | undefined,
+): string | undefined {
+  return row?.project_id ?? row?.labels?.[PROJECT_LABEL_KEY] ?? undefined;
+}
+
+/**
+ * Where a row's pin actually shows: a project pin on a session that has left
+ * its project shows (and counts) in the global Pinned section.
+ */
+export function effectivePinScope(
+  row: Pick<Conversation, "labels" | "family" | "project_id"> | undefined,
+): PinScope {
+  return pinScopeOf(row) === "project" && pinProjectKey(row) ? "project" : "global";
+}
+
+/** The scope of a row's pin ("global" for an unpinned or legacy-pinned row). */
+export function pinScopeOf(row: Pick<Conversation, "labels" | "family"> | undefined): PinScope {
+  return parsePinValue(rowPinValue(row)).scope;
+}
+
 /** Mutation key shared by every pin, unpin, and pinned-reorder write. */
 export const PIN_WRITE_MUTATION_KEY = ["pin-write"] as const;
 

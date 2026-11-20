@@ -45,6 +45,13 @@ import {
   overlayTitleIntoCaches,
   PIN_WRITE_MUTATION_KEY,
   PINNED_LABEL_KEY,
+  encodePinValue,
+  parsePinValue,
+  pinProjectKey,
+  effectivePinScope,
+  pinScopeOf,
+  rowPinValue,
+  type PinScope,
   filtersFromProjectQueryKey,
   parseProjectSessionsQueryKey,
   PROJECT_LABEL_KEY,
@@ -72,6 +79,7 @@ import {
   readPinnedConversationIds,
   setLegacyPinnedConversationId,
 } from "@/shell/sidebarNav";
+import { isSessionPinned } from "@/lib/sessionFamilies";
 import { apiErrorFromResponse, stopSession } from "@/lib/sessionsApi";
 import { isStaleCursorError, useRestartOnStaleCursor } from "@/lib/staleCursor";
 import { isRetryableRequestError } from "@/lib/queryRetry";
@@ -1920,8 +1928,7 @@ export async function fetchPinnedConversations(
   return {
     conversations: [...byId.values()].sort(
       (a, b) =>
-        Number(b.family?.pinned_at ?? b.labels[PINNED_LABEL_KEY] ?? 0) -
-          Number(a.family?.pinned_at ?? a.labels[PINNED_LABEL_KEY] ?? 0) ||
+        (parsePinValue(rowPinValue(b)).at || 0) - (parsePinValue(rowPinValue(a)).at || 0) ||
         b.id.localeCompare(a.id),
     ),
     filterHonored: mine.filterHonored && (shared?.filterHonored ?? true),
@@ -1968,12 +1975,13 @@ export async function setConversationPinned(
   id: string,
   pinned: boolean,
   pinnedAt: number = Date.now(),
+  scope: PinScope = "global",
 ): Promise<Conversation> {
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      labels: { [PINNED_LABEL_KEY]: pinned ? String(pinnedAt) : "" },
+      labels: { [PINNED_LABEL_KEY]: pinned ? encodePinValue(pinnedAt, scope) : "" },
     }),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -2135,7 +2143,19 @@ export function useTogglePinnedConversation() {
   return useMutation({
     mutationKey: PIN_WRITE_MUTATION_KEY,
     // `pinnedAt` overrides the pin's sort value; the Pinned section's drag-to-reorder sets it.
-    mutationFn: ({ id, pinned, pinnedAt }: { id: string; pinned: boolean; pinnedAt?: number }) => {
+    // `scope` picks where the pin shows: the global Pinned section (default) or
+    // the top of the session's project.
+    mutationFn: ({
+      id,
+      pinned,
+      pinnedAt,
+      scope = "global",
+    }: {
+      id: string;
+      pinned: boolean;
+      pinnedAt?: number;
+      scope?: PinScope;
+    }) => {
       // Against an old server, persist the pin locally instead of PATCHing a
       // bare key it would store but the upgraded server would drop on read.
       if (!serverCanStorePins()) {
@@ -2148,13 +2168,13 @@ export function useTogglePinnedConversation() {
         const labels = pinned ? { [PINNED_LABEL_KEY]: String(Date.now()) } : {};
         return Promise.resolve({ id, object: "conversation", labels } as Conversation);
       }
-      return setConversationPinned(id, pinned, pinnedAt);
+      return setConversationPinned(id, pinned, pinnedAt, scope);
     },
     // Move the row immediately — don't wait for the PATCH round-trip. Without
     // this the row lingers in its project folder (or the flat list) until the
     // network resolves, which reads as lag. Snapshot the pinned cache so a
     // failed PATCH rolls back.
-    onMutate: ({ id, pinned, pinnedAt }) => {
+    onMutate: ({ id, pinned, pinnedAt, scope = "global" }) => {
       refuseOverlappingPinWrite(queryClient);
       const existing = findRow(id);
       if (
@@ -2168,18 +2188,31 @@ export function useTogglePinnedConversation() {
       }
       const cachedPins =
         queryClient.getQueryData<PinnedConversationsResult>(PINNED_CONVERSATIONS_KEY);
+      // Each place pins show has its own limit: the global Pinned section, and
+      // every project separately. Legacy local pins are global.
+      const project = scope === "project" ? pinProjectKey(existing) : undefined;
+      const inScope = (row: Conversation | undefined) =>
+        scope === "project"
+          ? effectivePinScope(row) === "project" && pinProjectKey(row) === project
+          : effectivePinScope(row) === "global";
       const pinIds = new Set([
         ...(cachedPins?.conversations
           .filter(isPinOrderUnit)
           .filter((row) => includeShared || sessionVisibility(row, viewerId) === "mine")
+          .filter(inScope)
           .map((row) => row.id) ?? []),
-        ...readPinnedConversationIds().filter((pinId) => {
-          const row = findRow(pinId);
-          return includeShared || (row && sessionVisibility(row, viewerId) === "mine");
-        }),
+        ...(scope === "global"
+          ? readPinnedConversationIds().filter((pinId) => {
+              const row = findRow(pinId);
+              return includeShared || (row && sessionVisibility(row, viewerId) === "mine");
+            })
+          : []),
       ]);
       if (pinned && !pinIds.has(id) && pinIds.size >= pinCap) {
-        const message = `You can pin up to ${pinCap} sessions. Unpin a session first.`;
+        const message =
+          scope === "project"
+            ? `You can pin up to ${pinCap} sessions in a project. Unpin one first.`
+            : `You can pin up to ${pinCap} sessions. Unpin a session first.`;
         showToast(message);
         throw new Error(message);
       }
@@ -2187,7 +2220,7 @@ export function useTogglePinnedConversation() {
         queryClient.getQueryData<PinnedConversationsResult>(PINNED_CONVERSATIONS_KEY);
       const base = findRow(id)?.labels ?? {};
       const labels: Record<string, string> = pinned
-        ? { ...base, [PINNED_LABEL_KEY]: String(pinnedAt ?? Date.now()) }
+        ? { ...base, [PINNED_LABEL_KEY]: encodePinValue(pinnedAt ?? Date.now(), scope) }
         : Object.fromEntries(Object.entries(base).filter(([k]) => k !== PINNED_LABEL_KEY));
       if (!existing?.family) patch(id, labels, pinned);
       return { prevPinned, prevPin: base[PINNED_LABEL_KEY] };
@@ -2272,13 +2305,26 @@ export function useReorderPinnedConversations() {
   return useMutation({
     mutationKey: PIN_WRITE_MUTATION_KEY,
     mutationFn: (writes: { id: string; pinnedAt: number }[]) =>
-      Promise.allSettled(writes.map((w) => setConversationPinned(w.id, true, w.pinnedAt))),
+      Promise.allSettled(
+        writes.map((w) =>
+          setConversationPinned(
+            w.id,
+            true,
+            w.pinnedAt,
+            pinScopeOf(findCachedConversationRow(queryClient, w.id)),
+          ),
+        ),
+      ),
     onMutate: (writes) => {
       refuseOverlappingPinWrite(queryClient);
       const previous = writes.map(
         (w) => findCachedConversationRow(queryClient, w.id)?.labels?.[PINNED_LABEL_KEY],
       );
-      for (const w of writes) apply(w.id, String(w.pinnedAt));
+      for (const w of writes)
+        apply(
+          w.id,
+          encodePinValue(w.pinnedAt, pinScopeOf(findCachedConversationRow(queryClient, w.id))),
+        );
       return { previous };
     },
     onSuccess: (results, writes, ctx) => {
@@ -2747,6 +2793,50 @@ export function useMoveToNest() {
  */
 export function useMoveToProject() {
   const queryClient = useQueryClient();
+  const { pinCap, pinsIncludeShared, sharedAvailable } = useContext(SidebarConfigContext);
+  const includeShared = pinsIncludeShared && sharedAvailable;
+
+  // A project pin follows its session. Into another project it stays a project
+  // pin while that project has room, else it's unpinned. Out of every project
+  // it becomes a global pin while the Pinned section has room, else it's
+  // unpinned. Either way the toast says what happened.
+  const reconcileProjectPin = (id: string, project: string, projectId: string | null) => {
+    const pins = queryClient.getQueryData<PinnedConversationsResult>(PINNED_CONVERSATIONS_KEY);
+    const row =
+      pins?.conversations.find((c) => c.id === id) ?? findCachedConversationRow(queryClient, id);
+    if (!row || !isSessionPinned(row) || pinScopeOf(row) !== "project") return;
+    const others = (pins?.conversations ?? []).filter((c) => c.id !== id && isPinOrderUnit(c));
+    const viewerId = getCurrentUserId();
+    const write = (pinned: boolean, scope: PinScope, message: string) => {
+      const pinnedAt = Date.now();
+      const base = findCachedConversationRow(queryClient, id)?.labels ?? row.labels ?? {};
+      const labels: Record<string, string> = pinned
+        ? { ...base, [PINNED_LABEL_KEY]: encodePinValue(pinnedAt, scope) }
+        : Object.fromEntries(Object.entries(base).filter(([k]) => k !== PINNED_LABEL_KEY));
+      patchPinnedCaches(queryClient, id, labels, pinned, includeShared, viewerId);
+      setConversationPinned(id, pinned, pinnedAt, scope)
+        .then(() => {
+          if (row.family) invalidateFamilyLists(queryClient);
+          showToast(message);
+        })
+        .catch(() => {
+          void queryClient.invalidateQueries({ queryKey: PINNED_CONVERSATIONS_KEY });
+          showToast("Couldn't update the session's pin.");
+        });
+    };
+    if (project === "") {
+      const globalCount = others.filter((c) => effectivePinScope(c) === "global").length;
+      if (globalCount < pinCap) write(true, "global", "Moved the pin to Pinned.");
+      else write(false, "global", `Unpinned: Pinned already has ${pinCap} sessions.`);
+      return;
+    }
+    const keys = new Set([projectId, project].filter((k): k is string => !!k));
+    const projectCount = others.filter(
+      (c) => effectivePinScope(c) === "project" && keys.has(pinProjectKey(c) ?? ""),
+    ).length;
+    if (projectCount >= pinCap)
+      write(false, "project", `Unpinned: ${project} already has ${pinCap} pinned sessions.`);
+  };
 
   // Write a membership (project_id + labels) onto the row in every list cache
   // that may hold it, plus the pinned-row backfill cache. Fields are overlaid
@@ -2890,6 +2980,7 @@ export function useMoveToProject() {
     },
     onSuccess: (updated, { id, project }, previous) => {
       markConversationSeen(updated.id, updated.updated_at);
+      reconcileProjectPin(id, project, updated.project_id ?? null);
       // Filing can promote a label-only folder to first-class inside the
       // mutation. Seed the confirmed id into the cached projects list before
       // the refetches race: a conversations refetch can land first with the

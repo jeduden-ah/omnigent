@@ -317,7 +317,11 @@ describe("HeaderConversationMenu", () => {
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
-    expect(mocks.togglePinned).toHaveBeenCalledWith({ id: "conv-1", pinned: true });
+    expect(mocks.togglePinned).toHaveBeenCalledWith({
+      id: "conv-1",
+      pinned: true,
+      scope: "global",
+    });
 
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
@@ -347,6 +351,7 @@ describe("HeaderConversationMenu", () => {
       id: "conv-1",
       pinned: true,
       pinnedAt: 1700000000123,
+      scope: "global",
     });
   });
 
@@ -462,7 +467,11 @@ describe("HeaderConversationMenu", () => {
     it("runs the menu's own handlers", () => {
       renderMenu();
       runCommand("Pin session");
-      expect(mocks.togglePinned).toHaveBeenCalledWith({ id: "conv-1", pinned: true });
+      expect(mocks.togglePinned).toHaveBeenCalledWith({
+        id: "conv-1",
+        pinned: true,
+        scope: "global",
+      });
       runCommand("Fork session");
       expect(mocks.fork).toHaveBeenCalledTimes(1);
       runCommand("Rename session");
@@ -928,7 +937,11 @@ describe("HeaderConversationMenu desktop menu commands", () => {
   it("pins the shown session from Session → Pin and reports its pinned state", async () => {
     const view = renderMenu();
     sendCommand({ command: "toggle-pin-session", browserViewId: null });
-    expect(mocks.togglePinned).toHaveBeenCalledWith({ id: "conv-1", pinned: true });
+    expect(mocks.togglePinned).toHaveBeenCalledWith({
+      id: "conv-1",
+      pinned: true,
+      scope: "global",
+    });
     await waitFor(() =>
       expect(setDesktopCommandState).toHaveBeenLastCalledWith(
         expect.objectContaining({ sessionPinned: false, sessionArchived: false }),

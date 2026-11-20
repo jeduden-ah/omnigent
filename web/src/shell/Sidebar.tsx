@@ -18,7 +18,7 @@ import { GridSidebar } from "@/grid/GridWorkspace";
 import { GridDropTargets, SPLIT_EDGES, type GridDropTarget } from "@/grid/GridDropTargets";
 import { gridSessionIds, splitGrid } from "@/grid/gridLayout";
 import { getCurrentUserId } from "@/lib/identity";
-import { PinCapacityContext, SidebarConfigContext } from "@/lib/sidebarConfig";
+import { defaultPinScope, PinCapacityContext, SidebarConfigContext } from "@/lib/sidebarConfig";
 import {
   useProjectFolderCollapse,
   useProjectFolderPageSize,
@@ -135,7 +135,12 @@ import {
 } from "@dnd-kit/sortable";
 import { useProjectOrder, useSaveProjectOrder } from "@/hooks/useProjectOrder";
 import { useIsMutating, useQueries, useQueryClient } from "@tanstack/react-query";
-import { PIN_WRITE_MUTATION_KEY } from "@/lib/sessionListCache";
+import {
+  PIN_WRITE_MUTATION_KEY,
+  pinProjectKey,
+  pinScopeOf,
+  type PinScope,
+} from "@/lib/sessionListCache";
 import { canFlagUnread, isConversationMuted, showsUnreadFor } from "@/lib/sessionMute";
 import {
   Link,
@@ -307,6 +312,7 @@ import {
   orderByPinnedTimestamp,
   appendPinWrites,
   pinOrderWrites,
+  projectPinGroup,
   isPinOrderUnit,
   readPinnedConversationIds,
   resolveSidebarDrop,
@@ -456,8 +462,15 @@ const PinSavingContext = createContext(false);
 // Set only around the Pinned section, so its rows become drag-to-reorder targets.
 // `draggingId` is the session being dragged; `overId` the row it's over, and
 // `below` whether the pointer is in that row's lower half.
+interface PinDragState {
+  draggingId: string | null;
+  overId: string | null;
+  below: boolean;
+}
 const PinOrderContext = createContext<{
   ids: string[];
+  /** "global" for the Pinned section, `project:<name>` for a project's pins. */
+  group: string;
   draggingId: string | null;
   overId: string | null;
   below: boolean;
@@ -1056,9 +1069,23 @@ function SidebarImpl({
     [pinnedConversations],
   );
   // Stable identity (useStableCallback) so its changing deps don't defeat the row memo.
-  const togglePinnedConversation = useStableCallback((conversationId: string) => {
+  // Pins `scope` (default: the session's project when it has one, else global).
+  // An already-pinned session moves to `scope` when it's given and differs,
+  // and is unpinned otherwise.
+  const togglePinnedConversation = useStableCallback((conversationId: string, scope?: PinScope) => {
+    const row =
+      pinnedFamilyRows.find((c) => c.id === conversationId) ??
+      sidebarData.loadedRows.find((c) => c.id === conversationId);
     if (!pinnedIdSet.has(conversationId)) {
-      togglePinnedMutation.mutate({ id: conversationId, pinned: true });
+      togglePinnedMutation.mutate({
+        id: conversationId,
+        pinned: true,
+        scope: scope ?? (row ? defaultPinScope(row) : "global"),
+      });
+      return;
+    }
+    if (scope && row && pinScopeOf(row) !== scope) {
+      togglePinnedMutation.mutate({ id: conversationId, pinned: true, scope });
       return;
     }
     unpinWithUndo(
@@ -1743,7 +1770,10 @@ function ProjectFolder({
   ordering,
   scrollRoot,
   pageSize,
+  pinDrag = null,
 }: {
+  /** Drag state for reordering this project's pins; null when pin reordering is off. */
+  pinDrag?: PinDragState | null;
   /** The sidebar's scroll container, the root for unpaginated auto-loading. */
   scrollRoot: RefObject<HTMLElement | null>;
   /** Rows listed before, and added by, each Show more; undefined lists them all. */
@@ -1796,7 +1826,7 @@ function ProjectFolder({
       ConversationList); null while the pointer is outside the list. */
   frozenSortKeys: Map<string, number> | null;
   onRowClick: (e: MouseEvent<HTMLAnchorElement>) => void;
-  onTogglePinned: (conversationId: string) => void;
+  onTogglePinned: (conversationId: string, scope?: PinScope) => void;
   selectionMode: boolean;
   selectedIds: Set<string>;
   onToggleSelected: (conversationId: string, shiftKey?: boolean) => void;
@@ -1825,6 +1855,22 @@ function ProjectFolder({
   }, [expanded, name, watchedRows, registerFolder]);
   useEffect(() => () => registerFolder(name, null), [expanded, name, registerFolder]);
   const pinnedSet = useMemo(() => new Set(pinnedConversationIds), [pinnedConversationIds]);
+  const projectPinOrder = useMemo(
+    () =>
+      pinDrag && !archived && !placeholder
+        ? {
+            ids: windowConversations
+              .filter(
+                (c) =>
+                  isPinOrderUnit(c) && isSessionPinned(c, pinnedSet) && pinScopeOf(c) === "project",
+              )
+              .map((c) => c.id),
+            group: projectPinGroup(name),
+            ...pinDrag,
+          }
+        : null,
+    [pinDrag, archived, placeholder, windowConversations, pinnedSet, name],
+  );
   const conversations = useMemo(() => {
     // Union the folder's own pages with its members from the globally-loaded
     // window, window rows winning: those carry the move overlay
@@ -1835,21 +1881,25 @@ function ProjectFolder({
     for (const row of applyLocalResolutions(query.data?.pages.flatMap((page) => page.data) ?? []))
       byId.set(row.id, row);
     for (const c of windowConversations) byId.set(c.id, c);
-    // Pins take precedence over live folders.
-    return orderSessionFamilies(
-      sortConversations(
-        [...byId.values()].filter(
-          (c) =>
-            (c.archived === true) === archived &&
-            sessionInSidebarFolder(c, { id: projectId, name }, viewerId, includeSharedRuns) &&
-            (archived || !isSessionPinned(c, pinnedSet)),
-        ),
+    // Project pins stay in the project, listed first in pin order; global pins
+    // show in the Pinned section instead.
+    const members = [...byId.values()].filter(
+      (c) =>
+        (c.archived === true) === archived &&
+        sessionInSidebarFolder(c, { id: projectId, name }, viewerId, includeSharedRuns) &&
+        (archived || !isSessionPinned(c, pinnedSet) || pinScopeOf(c) === "project"),
+    );
+    const isPinnedHere = (c: Conversation) => !archived && isSessionPinned(c, pinnedSet);
+    return orderSessionFamilies([
+      ...orderByPinnedTimestamp(members.filter(isPinnedHere)),
+      ...sortConversations(
+        members.filter((c) => !isPinnedHere(c)),
         activeOverride,
         frozenSortKeys,
         sortBy,
         customOrder,
       ),
-    );
+    ]);
   }, [
     query.data,
     windowConversations,
@@ -2026,98 +2076,104 @@ function ProjectFolder({
           style={ordering.insertion === "before" ? { top: 0 } : { bottom: 0 }}
         />
       )}
-      <ConversationSection
-        headerDrag={placeholder ? undefined : headerDrag}
-        title={name}
-        icon={
-          icon ? (
-            <span className="text-[14px] leading-none">{icon}</span>
-          ) : expanded ? (
-            <FolderOpenIcon
-              className={cn(
-                "ui-icon",
-                headerActive ? "text-[var(--sidebar-active-foreground)]" : "text-muted-foreground",
-              )}
-            />
-          ) : (
-            <FolderIcon
-              className={cn(
-                "ui-icon",
-                headerActive ? "text-[var(--sidebar-active-foreground)]" : "text-muted-foreground",
-              )}
-            />
-          )
-        }
-        active={headerActive}
-        marker={marker}
-        conversations={draftRow ? [draftRow, ...display.rows] : display.rows}
-        heldConversations={expanded ? undefined : [...(draftRow ? [draftRow] : []), ...heldRows]}
-        listRef={listRef}
-        activeConversationId={activeConversationId}
-        pinnedConversationIds={pinnedConversationIds}
-        sessionShortcutSlots={sessionShortcutSlots}
-        // Projects default collapsed: shown only when explicitly expanded.
-        collapsed={!expanded}
-        onToggleCollapsed={onToggleCollapsed}
-        onActivate={onActivate}
-        collapsedFamilies={collapsedFamilies}
-        onToggleFamily={onToggleFamily}
-        onRowClick={onRowClick}
-        onTogglePinned={onTogglePinned}
-        selectionMode={selectionMode}
-        selectedIds={selectedIds}
-        onToggleSelected={onToggleSelected}
-        onProjectAssigned={onProjectAssigned}
-        reorderGroup={reorderable ? `project:${name}` : undefined}
-        emptyMessage={
-          loadingFirstPage ? undefined : archived ? (
-            "No archived sessions"
-          ) : placeholder ? (
-            "No sessions"
-          ) : (
-            <span className="block">
-              No sessions. Start a{" "}
-              <Link
-                to={`/?project=${encodeURIComponent(name)}`}
-                className="font-medium text-primary underline-offset-4 hover:underline"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRowClick(e);
-                }}
-              >
-                new session
-              </Link>
-              .
-            </span>
-          )
-        }
-        indentRows
-        headerAction={
-          placeholder ? undefined : (
-            <ProjectFolderActions
-              projectName={name}
-              onNavigate={onRowClick}
-              actions={orderedMenuActions}
-            />
-          )
-        }
-        headerContextMenu={
-          placeholder ? undefined : (
-            <ContextMenuContent
-              className="min-w-40"
-              onCloseAutoFocus={menuActions.onCloseAutoFocus}
-            >
-              <ProjectFolderMenuItems
-                components={contextBundle}
+      <PinOrderContext.Provider value={projectPinOrder}>
+        <ConversationSection
+          headerDrag={placeholder ? undefined : headerDrag}
+          title={name}
+          icon={
+            icon ? (
+              <span className="text-[14px] leading-none">{icon}</span>
+            ) : expanded ? (
+              <FolderOpenIcon
+                className={cn(
+                  "ui-icon",
+                  headerActive
+                    ? "text-[var(--sidebar-active-foreground)]"
+                    : "text-muted-foreground",
+                )}
+              />
+            ) : (
+              <FolderIcon
+                className={cn(
+                  "ui-icon",
+                  headerActive
+                    ? "text-[var(--sidebar-active-foreground)]"
+                    : "text-muted-foreground",
+                )}
+              />
+            )
+          }
+          active={headerActive}
+          marker={marker}
+          conversations={draftRow ? [draftRow, ...display.rows] : display.rows}
+          heldConversations={expanded ? undefined : [...(draftRow ? [draftRow] : []), ...heldRows]}
+          listRef={listRef}
+          activeConversationId={activeConversationId}
+          pinnedConversationIds={pinnedConversationIds}
+          sessionShortcutSlots={sessionShortcutSlots}
+          // Projects default collapsed: shown only when explicitly expanded.
+          collapsed={!expanded}
+          onToggleCollapsed={onToggleCollapsed}
+          onActivate={onActivate}
+          collapsedFamilies={collapsedFamilies}
+          onToggleFamily={onToggleFamily}
+          onRowClick={onRowClick}
+          onTogglePinned={onTogglePinned}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelected={onToggleSelected}
+          onProjectAssigned={onProjectAssigned}
+          reorderGroup={reorderable ? `project:${name}` : undefined}
+          emptyMessage={
+            loadingFirstPage ? undefined : archived ? (
+              "No archived sessions"
+            ) : placeholder ? (
+              "No sessions"
+            ) : (
+              <span className="block">
+                No sessions. Start a{" "}
+                <Link
+                  to={`/?project=${encodeURIComponent(name)}`}
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRowClick(e);
+                  }}
+                >
+                  new session
+                </Link>
+                .
+              </span>
+            )
+          }
+          indentRows
+          headerAction={
+            placeholder ? undefined : (
+              <ProjectFolderActions
                 projectName={name}
                 onNavigate={onRowClick}
                 actions={orderedMenuActions}
               />
-            </ContextMenuContent>
-          )
-        }
-        footer={footer}
-      />
+            )
+          }
+          headerContextMenu={
+            placeholder ? undefined : (
+              <ContextMenuContent
+                className="min-w-40"
+                onCloseAutoFocus={menuActions.onCloseAutoFocus}
+              >
+                <ProjectFolderMenuItems
+                  components={contextBundle}
+                  projectName={name}
+                  onNavigate={onRowClick}
+                  actions={orderedMenuActions}
+                />
+              </ContextMenuContent>
+            )
+          }
+          footer={footer}
+        />
+      </PinOrderContext.Provider>
       {menuDialogs}
     </div>
   );
@@ -2223,7 +2279,7 @@ interface ConversationListProps {
   // False against a server that can't store pins (they live in localStorage,
   // which has no order), so drag-to-reorder is off there.
   pinReorderEnabled: boolean;
-  onTogglePinned: (conversationId: string) => void;
+  onTogglePinned: (conversationId: string, scope?: PinScope) => void;
   onEnterSelectionMode: (scope: SelectionScope) => void;
   selectionMode: boolean;
   selectionScope: SelectionScope;
@@ -2625,10 +2681,13 @@ function ConversationList({
     // the Shared tab, a shared pin stays visible on My sessions, and the pins
     // don't vanish on the Archived tab either. (An archived session is never
     // pinned into the live sections — hence notArchived, not allWithPinned.)
-    const pinned = orderSessionFamilies(
-      orderByPinnedTimestamp(notArchived.filter((c) => isSessionPinned(c, pinnedSet))),
+    // A project pin stays in its project, listed at the top in pin order. A
+    // global pin, or a project pin whose session has no project folder, shows
+    // in the global Pinned section.
+    const allPinned = orderByPinnedTimestamp(
+      notArchived.filter((c) => isSessionPinned(c, pinnedSet)),
     );
-    const pinnedIdSet = new Set(pinned.map((c) => c.id));
+    const pinnedIdSet = new Set(allPinned.map((c) => c.id));
 
     // Folders use live members on All / My and archives on Archived. Filing is
     // owner-only, so Shared and grouped views omit folders; pins precede them.
@@ -2661,22 +2720,27 @@ function ConversationList({
       // Dual-read membership: a session belongs to this folder if it has
       // the first-class id OR the legacy omni_project label of this name,
       // and (filing being owner-only) the viewer owns it.
-      const inProject = folderCandidates.filter(
-        (c) =>
-          sessionInSidebarFolder(c, { id, name }, viewerId, includeSharedRuns) &&
-          !pinnedIdSet.has(c.id),
-      );
+      const inFolder = (c: Conversation) =>
+        sessionInSidebarFolder(c, { id, name }, viewerId, includeSharedRuns);
+      const inProject = folderCandidates.filter((c) => inFolder(c) && !pinnedIdSet.has(c.id));
+      const pinnedInProject =
+        activeTab === "archived"
+          ? []
+          : allPinned.filter((c) => pinScopeOf(c) === "project" && inFolder(c));
       inProject.forEach((c) => filedIds.add(c.id));
+      pinnedInProject.forEach((c) => filedIds.add(c.id));
       return {
         id,
         name,
         icon: "placeholder" in folder ? null : folder.icon,
         placeholder: "placeholder" in folder,
-        conversations: orderSessionFamilies(
-          sortConversations(inProject, activeOverride, frozenKeys, sortBy, customOrder),
-        ),
+        conversations: orderSessionFamilies([
+          ...pinnedInProject,
+          ...sortConversations(inProject, activeOverride, frozenKeys, sortBy, customOrder),
+        ]),
       };
     });
+    const pinned = orderSessionFamilies(allPinned.filter((c) => !filedIds.has(c.id)));
     // NOTE: empty projects are intentionally NOT filtered out. A project comes
     // from the server project list (useProjects), so it can have zero *loaded*
     // conversations — either genuinely empty or because its chats live on an
@@ -2944,7 +3008,7 @@ function ConversationList({
     for (const draft of nestedDrafts) {
       if (revealedDrafts.current.has(draft.key)) continue;
       const source = allConversations.find((row) => row.id === draft.source.id) ?? draft.source;
-      const pinned = isSessionPinned(source, pinnedSet);
+      const pinned = isSessionPinned(source, pinnedSet) && pinScopeOf(source) === "global";
       const projectName =
         projects.find((project) => project.id !== null && project.id === source.project_id)?.name ??
         source.labels[PROJECT_LABEL_KEY];
@@ -3020,6 +3084,7 @@ function ConversationList({
     label: string;
     project: string | null;
     isPinned: boolean;
+    pinGroup: string | null;
     canDetachNest: boolean;
     canMoveProject: boolean;
   } | null>(null);
@@ -3071,6 +3136,7 @@ function ConversationList({
           label?: string;
           project?: string | null;
           isPinned?: boolean;
+          pinGroup?: string | null;
           canDetachNest?: boolean;
           canMoveProject?: boolean;
         }
@@ -3080,6 +3146,7 @@ function ConversationList({
       label: data?.label ?? String(event.active.id),
       project: data?.project ?? null,
       isPinned: data?.isPinned ?? false,
+      pinGroup: data?.pinGroup ?? null,
       canDetachNest: data?.canDetachNest === true,
       canMoveProject: data?.canMoveProject === true,
     });
@@ -3127,7 +3194,12 @@ function ConversationList({
       if (event.active.data.current?.canManage === false) return;
       const target = (event.over?.data.current as SidebarDropTarget | undefined) ?? null;
       const action = resolveSidebarDrop(
-        { id: dragged.id, project: dragged.project, isPinned: dragged.isPinned },
+        {
+          id: dragged.id,
+          project: dragged.project,
+          isPinned: dragged.isPinned,
+          pinGroup: dragged.pinGroup,
+        },
         target,
       );
       if (
@@ -3147,8 +3219,18 @@ function ConversationList({
       }
       // Which half of the pinned row the pointer is in; only rows not yet in the pin order use it.
       const below = event.collisions?.[0]?.data?.below === true;
+      // The pin list the drop lands in: the Pinned section, or one project's pins.
+      const pinGroup = (target?.type === "pin-order" && target.group) || "global";
+      const pinList =
+        pinGroup === "global"
+          ? sections.pinned
+          : (
+              sections.projectGroups.find((g) => projectPinGroup(g.name) === pinGroup)
+                ?.conversations ?? []
+            ).filter((c) => isSessionPinned(c, pinnedSet) && pinScopeOf(c) === "project");
+      const pinScope: PinScope = pinGroup === "global" ? "global" : "project";
       if (action.kind === "reorder-pin") {
-        const writes = pinOrderWrites(sections.pinned, dragged.id, action.targetId, below);
+        const writes = pinOrderWrites(pinList, dragged.id, action.targetId, below);
         if (writes.length > 0) reorderPins(writes);
         return;
       }
@@ -3157,14 +3239,14 @@ function ConversationList({
         // bottom when the server stores pin order. The new pin goes through the toggle
         // (cap / ownership checks); once it's accepted, renumbered neighbours follow.
         const writes = action.targetId
-          ? pinOrderWrites(sections.pinned, dragged.id, action.targetId, below)
-          : appendPinWrites(sections.pinned, dragged.id);
+          ? pinOrderWrites(pinList, dragged.id, action.targetId, below)
+          : appendPinWrites(pinList, dragged.id);
         const pin = writes.find((w) => w.id === dragged.id);
         const rest = writes.filter((w) => w.id !== dragged.id);
         // Chain on this call's own promise: per-call mutate callbacks are dropped
         // when a later drop calls the mutation again.
         if (pin) {
-          pinAt({ id: pin.id, pinned: true, pinnedAt: pin.pinnedAt })
+          pinAt({ id: pin.id, pinned: true, pinnedAt: pin.pinnedAt, scope: pinScope })
             .then(() => {
               if (rest.length > 0) reorderPins(rest);
             })
@@ -3177,7 +3259,7 @@ function ConversationList({
         // Toggle the pin: `pin` is only emitted for an unpinned session, `unpin`
         // only for a pinned one, so a single toggle lands the intended state.
         // Unpinning a pinned session drops it back into its project / Chats.
-        onTogglePinned(dragged.id);
+        onTogglePinned(dragged.id, action.kind === "pin" ? pinScope : undefined);
         return;
       }
       if (action.kind === "ungroup") {
@@ -3197,6 +3279,8 @@ function ConversationList({
       projects,
       saveOrder,
       sections.pinned,
+      sections.projectGroups,
+      pinnedSet,
       pinAt,
       pinReorderEnabled,
       reorderPins,
@@ -3377,17 +3461,23 @@ function ConversationList({
       ),
     [isMobile, numberedSessionIds],
   );
-  const pinOrder = useMemo(
+  const pinDrag = useMemo<PinDragState | null>(
     () =>
       pinReorderEnabled && !pinWriting
+        ? { draggingId: activeDrag?.id ?? null, overId: overPin, below: pinBelow }
+        : null,
+    [pinReorderEnabled, pinWriting, activeDrag, overPin, pinBelow],
+  );
+  const pinOrder = useMemo(
+    () =>
+      pinDrag
         ? {
             ids: sections.pinned.filter(isPinOrderUnit).map((c) => c.id),
-            draggingId: activeDrag?.id ?? null,
-            overId: overPin,
-            below: pinBelow,
+            group: "global",
+            ...pinDrag,
           }
         : null,
-    [pinReorderEnabled, pinWriting, sections.pinned, activeDrag, overPin, pinBelow],
+    [pinDrag, sections.pinned],
   );
 
   // Pinned membership is server-authoritative (the `omnigent.pinned` label),
@@ -3576,6 +3666,9 @@ function ConversationList({
                 // Only rows in the dragged session's own list are reorder targets.
                 if (target?.type === "session-order")
                   return target.id !== args.active.id && target.group === source?.reorderGroup;
+                // A project's pin rows only take sessions from that project.
+                if (target?.type === "pin-order" && target.group && target.group !== "global")
+                  return !!source?.project && target.group === projectPinGroup(source.project);
                 return source?.canManage !== false || target?.type === "session-grid";
               }),
             });
@@ -3602,6 +3695,23 @@ function ConversationList({
             const targets = collisions.filter(
               (hit) => hit.data?.droppableContainer.data.current?.type !== "session-nest",
             );
+            // A project's pin rows only take that project's sessions; there they
+            // win over session reordering, since pins always sit on top.
+            const pinHit = targets.find((hit) => {
+              const group = hit.data?.droppableContainer.data.current?.group as string | undefined;
+              return (
+                hit.data?.droppableContainer.data.current?.type === "pin-order" &&
+                !!group &&
+                group !== "global" &&
+                !!source?.project &&
+                group === projectPinGroup(source.project)
+              );
+            });
+            if (pinHit && args.pointerCoordinates) {
+              const rect = args.droppableRects.get(pinHit.id);
+              const below = !!rect && args.pointerCoordinates.y > rect.top + rect.height / 2;
+              return [{ ...pinHit, data: { ...pinHit.data, below } }];
+            }
             // A row reorders; elsewhere, e.g. over another project's row, its folder files it.
             const row = targets.find(
               (hit) => hit.data?.droppableContainer.data.current?.type === "session-order",
@@ -3826,6 +3936,7 @@ function ConversationList({
                               }}
                               scrollRoot={scrollContainerRef}
                               pageSize={projectFolderCollapse ? projectFolderPageSize : undefined}
+                              pinDrag={pinDrag}
                               name={group.name}
                               projectId={group.id}
                               icon={group.icon}
@@ -4827,7 +4938,7 @@ function ConversationSection({
   collapsedFamilies: ReadonlySet<string>;
   onToggleFamily: (familyId: string) => void;
   onRowClick: (e: MouseEvent<HTMLAnchorElement>) => void;
-  onTogglePinned: (conversationId: string) => void;
+  onTogglePinned: (conversationId: string, scope?: PinScope) => void;
   selectionMode: boolean;
   selectedIds: Set<string>;
   onToggleSelected: (conversationId: string, shiftKey?: boolean) => void;
@@ -5163,7 +5274,7 @@ export function ConversationMenuItems({
   // unread dot (the active thread and running sessions included).
   canMarkUnread: boolean;
   currentProject: string | null;
-  onTogglePinned?: (conversationId: string) => void;
+  onTogglePinned?: (conversationId: string, scope?: PinScope) => void;
   onMarkUnread: () => void;
   onMarkRead: () => void;
   onProjectAssigned?: (projectName: string) => void;
@@ -5187,8 +5298,12 @@ export function ConversationMenuItems({
   const info = useServerInfo();
   const isMuted = isConversationMuted(conversation);
   const setMuted = useSetConversationMuted();
-  const atPinCap = useContext(PinCapacityContext);
+  const pinCapacity = useContext(PinCapacityContext);
   const pinSaving = useContext(PinSavingContext);
+  const pinScope = isPinned ? pinScopeOf(conversation) : null;
+  // A session in a project can be pinned to the project or globally.
+  const pinnable = !kanbanCard && !isArchived && !isIndentedSibling(conversation);
+  const hasProject = !!pinProjectKey(conversation);
   const nestMoves = useContext(NestMoveContext);
   const canMoveNest = !!nestMoves && !isArchived && !conversation.parent_session_id;
   const moveSession = useContext(SessionReorderContext);
@@ -5330,15 +5445,37 @@ export function ConversationMenuItems({
       )}
       {/* Desktop pins from the hover button unless Settings hides it; archived
           rows omit Pin (archive outranks pin). */}
-      {onTogglePinned && !kanbanCard && !isArchived && !isIndentedSibling(conversation) && (
+      {onTogglePinned && pinnable && (isPinned || !hasProject) && (
         <C.Item
           data-testid="pin-conversation"
-          disabled={pinSaving || (!isPinned && atPinCap)}
+          disabled={pinSaving || (!isPinned && pinCapacity(conversation, "global"))}
           className={cn("mobile-touch-target", showQuickActions && "md:hidden")}
           onSelect={() => onTogglePinned(conversation.id)}
         >
           {isPinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}
           {isPinned ? "Unpin" : "Pin"}
+        </C.Item>
+      )}
+      {onTogglePinned && pinnable && hasProject && pinScope !== "project" && (
+        <C.Item
+          data-testid="pin-conversation-project"
+          disabled={pinSaving || pinCapacity(conversation, "project")}
+          className={cn("mobile-touch-target", !isPinned && showQuickActions && "md:hidden")}
+          onSelect={() => onTogglePinned(conversation.id, "project")}
+        >
+          <PinIcon className="size-3.5" />
+          Pin to project
+        </C.Item>
+      )}
+      {onTogglePinned && pinnable && hasProject && pinScope !== "global" && (
+        <C.Item
+          data-testid="pin-conversation-global"
+          disabled={pinSaving || pinCapacity(conversation, "global")}
+          className="mobile-touch-target"
+          onSelect={() => onTogglePinned(conversation.id, "global")}
+        >
+          <PinIcon className="size-3.5" />
+          Pin globally
         </C.Item>
       )}
       {/* Single-user mode has no other users to share with — omit the item
@@ -6027,7 +6164,7 @@ function ConversationRowImpl({
   /** Jump slot of a pinned row that has a number hint; undefined elsewhere. */
   shortcutSlot?: number;
   onClick: (e: MouseEvent<HTMLAnchorElement>) => void;
-  onTogglePinned: (conversationId: string) => void;
+  onTogglePinned: (conversationId: string, scope?: PinScope) => void;
   selectionMode: boolean;
   isSelected: boolean;
   onToggleSelected: (conversationId: string, shiftKey?: boolean) => void;
@@ -6038,7 +6175,7 @@ function ConversationRowImpl({
   nextId?: string;
   reorderIndex?: number;
 }) {
-  const atPinCap = useContext(PinCapacityContext);
+  const atPinCap = useContext(PinCapacityContext)(conversation, defaultPinScope(conversation));
   const pinSaving = useContext(PinSavingContext);
   let pinTooltip = isPinned ? "Unpin" : "Pin";
   if (pinSaving) pinTooltip = "Saving pins…";
@@ -6305,7 +6442,14 @@ function ConversationRowImpl({
       type: "session",
       label,
       project: currentProject,
-      isPinned,
+      // Only a global pin sits in the Pinned section; a project pin drags like
+      // any session in its project (and can be dropped on Pinned to pin globally).
+      isPinned: isPinned && pinScopeOf(conversation) === "global",
+      pinGroup: !isPinned
+        ? null
+        : pinScopeOf(conversation) === "project" && currentProject
+          ? projectPinGroup(currentProject)
+          : "global",
       canManage: isOwner && !familyIndented && !isIndentedSibling(conversation),
       canMoveProject: !isIndentedSibling(conversation),
       canMoveNest: canMoveNest && nestMoves.canJoin,
@@ -6342,7 +6486,7 @@ function ConversationRowImpl({
   const pinOrder = useContext(PinOrderContext);
   const { setNodeRef: setPinOrderNodeRef } = useDroppable({
     id: `pin-order:${conversation.id}`,
-    data: { type: "pin-order", id: conversation.id },
+    data: { type: "pin-order", id: conversation.id, group: pinOrder?.group },
     disabled: !pinOrder || !isPinned || !pinOrder.ids.includes(conversation.id),
   });
   // A pin dragged down lands below this row and one dragged up above it; a new

@@ -20,6 +20,10 @@ import {
   recentlyCreatedSessions,
   removeIdsFromPages,
   settleOpenSessionRow,
+  encodePinValue,
+  parsePinValue,
+  pinScopeOf,
+  PINNED_LABEL_KEY,
 } from "./sessionListCache";
 
 function conv(id: string, overrides: Partial<Conversation> = {}): Conversation {
@@ -851,5 +855,28 @@ describe("insertCreatedRowIntoCaches", () => {
 
     insertCreatedRowIntoCaches(qc, row);
     expect(ids(qc, ["conversations", "", false])).toEqual(["fork", "old"]);
+  });
+});
+
+describe("pin values", () => {
+  it("reads an unprefixed value as a global pin and a project: value as a project pin", () => {
+    expect(parsePinValue("1700")).toEqual({ scope: "global", at: 1700 });
+    expect(parsePinValue("project:1700")).toEqual({ scope: "project", at: 1700 });
+    expect(parsePinValue(undefined).scope).toBe("global");
+    expect(parsePinValue("project:").at).toBeNaN();
+  });
+
+  it("round-trips through encodePinValue", () => {
+    expect(parsePinValue(encodePinValue(42, "project"))).toEqual({ scope: "project", at: 42 });
+    expect(encodePinValue(42)).toBe("42");
+  });
+
+  it("takes a family's pin scope over the row's own label", () => {
+    expect(
+      pinScopeOf({
+        labels: { [PINNED_LABEL_KEY]: "1" },
+        family: { pinned_at: "project:1" },
+      } as never),
+    ).toBe("project");
   });
 });

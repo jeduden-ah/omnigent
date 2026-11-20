@@ -19,6 +19,7 @@ import {
   moveCustomOrder,
   orderByPinnedTimestamp,
   pinOrderWrites,
+  projectPinGroup,
   resolveSidebarDrop,
   sessionInSidebarFolder,
   sessionsListAcceptsDrop,
@@ -676,7 +677,9 @@ describe("conversationDisplayLabel", () => {
 // null target → no-op.
 describe("resolveSidebarDrop", () => {
   // Source builder — defaults to an unfiled, unpinned session.
-  const src = (over: Partial<{ project: string | null; isPinned: boolean }> = {}) => ({
+  const src = (
+    over: Partial<{ project: string | null; isPinned: boolean; pinGroup: string | null }> = {},
+  ) => ({
     id: "c1",
     project: null,
     isPinned: false,
@@ -767,6 +770,7 @@ describe("resolveSidebarDrop", () => {
     expect(resolveSidebarDrop(src({ isPinned: true }), { type: "pin-order", id: "c2" })).toEqual({
       kind: "reorder-pin",
       targetId: "c2",
+      group: "global",
     });
     expect(resolveSidebarDrop(src({ isPinned: true }), { type: "pin-order", id: "c1" })).toEqual({
       kind: "none",
@@ -777,7 +781,38 @@ describe("resolveSidebarDrop", () => {
     expect(resolveSidebarDrop(src(), { type: "pin-order", id: "c2" })).toEqual({
       kind: "pin",
       targetId: "c2",
+      scope: "global",
     });
+  });
+
+  it("reorders a project pin within its own project's pins", () => {
+    const group = projectPinGroup("Sprint 42");
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42", pinGroup: group }), {
+        type: "pin-order",
+        id: "c2",
+        group,
+      }),
+    ).toEqual({ kind: "reorder-pin", targetId: "c2", group });
+  });
+
+  it("pins an unpinned project session into its project's pin slot", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42" }), {
+        type: "pin-order",
+        id: "c2",
+        group: projectPinGroup("Sprint 42"),
+      }),
+    ).toEqual({ kind: "pin", targetId: "c2", scope: "project" });
+  });
+
+  it("pins a project pin globally when dropped among the global pins", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42", pinGroup: projectPinGroup("Sprint 42") }), {
+        type: "pin-order",
+        id: "c2",
+      }),
+    ).toEqual({ kind: "pin", targetId: "c2", scope: "global" });
   });
 
   it("is a no-op when dropped on nothing droppable (e.g. Shared with me)", () => {

@@ -19,7 +19,12 @@ import {
   type SidebarShowField,
   type SidebarViewPreferences,
 } from "@/lib/sidebarViewPreferences";
-import { parseProjectSessionsQueryKey, recentlyCreatedSessions } from "@/lib/sessionListCache";
+import {
+  parseProjectSessionsQueryKey,
+  effectivePinScope,
+  pinProjectKey,
+  recentlyCreatedSessions,
+} from "@/lib/sessionListCache";
 import { customSortOrder, isPinOrderUnit, sidebarSortBy } from "@/shell/sidebarNav";
 import type { SessionFilter } from "@/lib/sessionFilterPreferences";
 import {
@@ -37,6 +42,7 @@ import {
   sidebarConfig,
   SidebarConfigContext,
   PinCapacityContext,
+  type PinCapacityCheck,
   type SidebarConfig,
 } from "@/lib/sidebarConfig";
 import { filterSessionScope, sessionVisibility } from "@/lib/sessionVisibility";
@@ -375,16 +381,24 @@ export function SidebarDataProvider({
   identityReady?: boolean;
 }) {
   const data = useSidebarSources(config, identityReady);
+  const pinRows = data.pinned.data?.conversations;
+  const pinCapacity = useCallback<PinCapacityCheck>(
+    (row, scope) => {
+      const project = pinProjectKey(row);
+      const count = (pinRows ?? []).filter(
+        (pin) =>
+          isPinOrderUnit(pin) &&
+          effectivePinScope(pin) === scope &&
+          (scope === "global" || pinProjectKey(pin) === project),
+      ).length;
+      return count >= config.pinCap;
+    },
+    [pinRows, config.pinCap],
+  );
   return (
     <SidebarConfigContext.Provider value={config}>
       <SidebarDataContext.Provider value={data}>
-        <PinCapacityContext.Provider
-          value={
-            (data.pinned.data?.conversations.filter(isPinOrderUnit).length ?? 0) >= config.pinCap
-          }
-        >
-          {children}
-        </PinCapacityContext.Provider>
+        <PinCapacityContext.Provider value={pinCapacity}>{children}</PinCapacityContext.Provider>
       </SidebarDataContext.Provider>
     </SidebarConfigContext.Provider>
   );

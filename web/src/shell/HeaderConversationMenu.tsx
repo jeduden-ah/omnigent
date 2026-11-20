@@ -49,7 +49,8 @@ import {
 import { useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isIndentedSibling, isSessionPinned } from "@/lib/sessionFamilies";
-import { PIN_WRITE_MUTATION_KEY } from "@/lib/sessionListCache";
+import { defaultPinScope } from "@/lib/sidebarConfig";
+import { PIN_WRITE_MUTATION_KEY, pinProjectKey, pinScopeOf } from "@/lib/sessionListCache";
 import { canFlagUnread } from "@/lib/sessionMute";
 import { exportSessionTranscript } from "@/lib/sessionsApi";
 import { triggerBrowserDownload } from "@/hooks/useFileContent";
@@ -282,7 +283,17 @@ export function HeaderConversationMenu({
   const togglePin = () =>
     isPinned
       ? unpinWithUndo(queryClient, togglePinned.mutateAsync, conversation.id, conversation)
-      : togglePinned.mutate({ id: conversation.id, pinned: true });
+      : togglePinned.mutate({
+          id: conversation.id,
+          pinned: true,
+          scope: defaultPinScope(conversation),
+        });
+  // A session in a project pins to the project by default; this pins it to the
+  // global Pinned section instead (or moves a project pin there).
+  const canPinGlobally =
+    canPin && !!pinProjectKey(conversation) && !(isPinned && pinScopeOf(conversation) === "global");
+  const pinGlobally = () =>
+    togglePinned.mutate({ id: conversation.id, pinned: true, scope: "global" });
   // Desktop Session → Pin (⌥⌘P), Archive (⇧⌘A) and Fork (⌥⌘F) act on the session shown here.
   // Like the menu item, Pin waits out a pending pin write (from any row).
   useDesktopCommand("toggle-pin-session", pinSaving || !canPin ? null : togglePin, {
@@ -375,10 +386,21 @@ export function HeaderConversationMenu({
           onSelect={togglePin}
         >
           {isPinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}
-          {isPinned ? "Unpin" : "Pin"}
+          {isPinned ? "Unpin" : pinProjectKey(conversation) ? "Pin to project" : "Pin"}
           {desktopShortcuts && (
             <CompactShortcutKeys keys={PIN_SESSION_KEYS} className="ml-auto pl-4" />
           )}
+        </DropdownMenuItem>
+      )}
+      {canPinGlobally && (
+        <DropdownMenuItem
+          data-testid="header-pin-conversation-global"
+          className={itemClass}
+          disabled={pinSaving}
+          onSelect={pinGlobally}
+        >
+          <PinIcon className="size-3.5" />
+          Pin globally
         </DropdownMenuItem>
       )}
       {canShare && (

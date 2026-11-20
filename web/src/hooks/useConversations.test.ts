@@ -3125,6 +3125,96 @@ describe("useMoveToNest", () => {
   );
 });
 
+describe("useMoveToProject project pins", () => {
+  const pinRow = (id: string, pin: string, project: string | null) => ({
+    id,
+    object: "conversation",
+    title: id,
+    created_at: 0,
+    updated_at: 1,
+    project_id: project,
+    labels: { [PINNED_LABEL_KEY]: pin },
+  });
+
+  // Route by URL: project list, session PATCHes, and the move's follow-up refetches.
+  const routeFetch = (movedProjectId: string | null) =>
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === "/v1/projects")
+        return Promise.resolve(
+          mockResponse({ object: "list", data: [{ id: "p_full", name: "Full" }] }),
+        );
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(init.body as string) as { labels?: Record<string, string> };
+        return Promise.resolve(
+          mockResponse({
+            ...pinRow("conv_move", "", movedProjectId),
+            labels: body.labels ?? {},
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ object: "list", data: [], has_more: false }));
+    });
+
+  const pinPatches = () =>
+    fetchMock.mock.calls
+      .map(([, init]) => init as RequestInit | undefined)
+      .filter((init) => init?.method === "PATCH")
+      .map((init) => JSON.parse(init!.body as string) as { labels?: Record<string, string> })
+      .filter((body) => body.labels && PINNED_LABEL_KEY in body.labels)
+      .map((body) => body.labels![PINNED_LABEL_KEY]);
+
+  const setup = (pins: ReturnType<typeof pinRow>[], pinCap: number) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(PINNED_CONVERSATIONS_KEY, {
+      conversations: pins,
+      filterHonored: true,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        SidebarConfigContext.Provider,
+        { value: { ...sidebarConfig, pinCap } },
+        createElement(QueryClientProvider, { client: queryClient }, children),
+      );
+    return renderHook(() => useMoveToProject(), { wrapper });
+  };
+
+  it("turns a project pin into a global pin when its session leaves every project", async () => {
+    routeFetch(null);
+    const { result } = setup([pinRow("conv_move", "project:5", "p_old")], 30);
+    result.current.mutate({ id: "conv_move", project: "" });
+    await waitFor(() => expect(pinPatches()).toHaveLength(1));
+    expect(pinPatches()[0]).toMatch(/^\d+$/);
+  });
+
+  it("unpins a project pin leaving its project when Pinned is full", async () => {
+    routeFetch(null);
+    const { result } = setup(
+      [pinRow("conv_move", "project:5", "p_old"), pinRow("conv_g", "7", null)],
+      1,
+    );
+    result.current.mutate({ id: "conv_move", project: "" });
+    await waitFor(() => expect(pinPatches()).toEqual([""]));
+  });
+
+  it("unpins a project pin moved into a project that is already at its limit", async () => {
+    routeFetch("p_full");
+    const { result } = setup(
+      [pinRow("conv_move", "project:5", "p_old"), pinRow("conv_full", "project:6", "p_full")],
+      1,
+    );
+    result.current.mutate({ id: "conv_move", project: "Full" });
+    await waitFor(() => expect(pinPatches()).toEqual([""]));
+  });
+
+  it("keeps a project pin moved into a project with room", async () => {
+    routeFetch("p_full");
+    const { result } = setup([pinRow("conv_move", "project:5", "p_old")], 1);
+    result.current.mutate({ id: "conv_move", project: "Full" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(pinPatches()).toEqual([]);
+  });
+});
+
 describe("useMoveToProject", () => {
   it("resolves the project name to an id, then PATCHes project_id", async () => {
     // Filing by name first lists projects to resolve the id, then PATCHes.

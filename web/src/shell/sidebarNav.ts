@@ -2,7 +2,12 @@ import { arrayMove } from "@dnd-kit/sortable";
 import type { Conversation, SessionSortBy } from "@/hooks/useConversations";
 import { nativeCodingAgentForWrapper, WRAPPER_LABEL_KEY } from "@/lib/nativeCodingAgents";
 import { getOptimisticTitle } from "@/lib/optimisticTitles";
-import { PROJECT_LABEL_KEY, PINNED_LABEL_KEY } from "@/lib/sessionListCache";
+import {
+  PROJECT_LABEL_KEY,
+  PINNED_LABEL_KEY,
+  parsePinValue,
+  type PinScope,
+} from "@/lib/sessionListCache";
 import {
   DEFAULT_AUTOMATION_PROJECT,
   SCHEDULED_TASK_INITIAL_RUN_LABEL_KEY,
@@ -563,7 +568,7 @@ export function orderByPinnedTimestamp(conversations: readonly Conversation[]): 
 function pinnedSortValue(c: Conversation): number {
   const raw =
     c.family?.pinned_at ?? (!isIndentedSibling(c) ? c.labels?.[PINNED_LABEL_KEY] : undefined);
-  return raw ? Number(raw) : NaN;
+  return parsePinValue(raw).at;
 }
 
 /** A pin label rewrite: the new `omnigent.pinned` sort value for one session. */
@@ -659,6 +664,15 @@ export interface SidebarDragSource {
   id: string;
   project: string | null;
   isPinned: boolean;
+  /** The pin list the session sits in: "global" (the Pinned section),
+      `project:<name>` for a project pin, `null` when unpinned. Defaults to
+      "global" when `isPinned`, else `null`. */
+  pinGroup?: string | null;
+}
+
+/** The pin list group for a project folder's pins. */
+export function projectPinGroup(projectName: string): string {
+  return `project:${projectName}`;
 }
 
 /** What a row was dropped onto. A project folder files the session into that
@@ -670,7 +684,7 @@ export type SidebarDropTarget =
   | { type: "project"; name: string }
   | { type: "ungroup" }
   | { type: "pin" }
-  | { type: "pin-order"; id: string }
+  | { type: "pin-order"; id: string; group?: string }
   | null;
 
 /** The action a drop resolves to. `move` files the session into a project;
@@ -687,9 +701,9 @@ export type SidebarDropTarget =
 export type SidebarDropAction =
   | { kind: "move"; project: string; unpin: boolean }
   | { kind: "ungroup"; project: string; unpin: boolean }
-  | { kind: "pin"; targetId?: string }
+  | { kind: "pin"; targetId?: string; scope?: PinScope }
   | { kind: "unpin" }
-  | { kind: "reorder-pin"; targetId: string }
+  | { kind: "reorder-pin"; targetId: string; group?: string }
   | { kind: "none" };
 
 /**
@@ -727,10 +741,16 @@ export function resolveSidebarDrop(
     return source.isPinned ? { kind: "none" } : { kind: "pin" };
   }
   if (target.type === "pin-order") {
-    if (!source.isPinned) return { kind: "pin", targetId: target.id };
+    // Each pin list (the Pinned section, or one project's pins) reorders on its
+    // own; a session from outside the list is pinned into the dropped-on slot.
+    const group = target.group ?? "global";
+    const sourceGroup =
+      source.pinGroup !== undefined ? source.pinGroup : source.isPinned ? "global" : null;
+    if (sourceGroup !== group)
+      return { kind: "pin", targetId: target.id, scope: group === "global" ? "global" : "project" };
     return target.id === source.id
       ? { kind: "none" }
-      : { kind: "reorder-pin", targetId: target.id };
+      : { kind: "reorder-pin", targetId: target.id, group };
   }
   // Ungroup (dropped on "Chats" / the fallback strip): land it in the flat list.
   if (source.project) return { kind: "ungroup", project: source.project, unpin: source.isPinned };

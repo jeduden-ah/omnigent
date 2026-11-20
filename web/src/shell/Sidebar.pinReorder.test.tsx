@@ -244,6 +244,7 @@ describe("dropping an unpinned session onto a pinned row", () => {
       id: "conv_c",
       pinned: true,
       pinnedAt: 1001,
+      scope: "global",
     });
     await waitFor(() =>
       expect(mocks.reorderPins).toHaveBeenCalledExactlyOnceWith([{ id: "conv_b", pinnedAt: 1002 }]),
@@ -273,6 +274,7 @@ describe("dropping an unpinned session onto a pinned row", () => {
         id: "conv_c",
         pinned: true,
         pinnedAt: 2001,
+        scope: "global",
       }),
     );
     expect(mocks.reorderPins).not.toHaveBeenCalled();
@@ -292,6 +294,7 @@ describe("dropping an unpinned session onto a pinned row", () => {
         id: "conv_c",
         pinned: true,
         pinnedAt: last + 1,
+        scope: "global",
       }),
     );
     expect(mocks.reorderPins).not.toHaveBeenCalled();
@@ -312,6 +315,7 @@ describe("dropping an unpinned session onto a pinned row", () => {
         id: "conv_c",
         pinned: true,
         pinnedAt: 3001,
+        scope: "global",
       }),
     );
     expect(mocks.reorderPins).not.toHaveBeenCalled();
@@ -401,7 +405,11 @@ describe("dropping an unpinned session onto a pinned row", () => {
     await dropOnto("conv_c", "conv_d", { expectTarget: false, offsetY: ROW_HEIGHT / 2 + 6 });
 
     await waitFor(() =>
-      expect(mocks.pinFn).toHaveBeenCalledExactlyOnceWith({ id: "conv_c", pinned: true }),
+      expect(mocks.pinFn).toHaveBeenCalledExactlyOnceWith({
+        id: "conv_c",
+        pinned: true,
+        scope: "global",
+      }),
     );
     expect(mocks.reorderPins).not.toHaveBeenCalled();
   });
@@ -485,7 +493,12 @@ describe("unpinning from a sidebar row", () => {
     expect(pill).toHaveTextContent("conv_a");
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() =>
-      expect(mocks.pinFn).toHaveBeenLastCalledWith({ id: "conv_a", pinned: true, pinnedAt: 1000 }),
+      expect(mocks.pinFn).toHaveBeenLastCalledWith({
+        id: "conv_a",
+        pinned: true,
+        pinnedAt: 1000,
+        scope: "global",
+      }),
     );
     await waitFor(() => expect(pill).not.toBeInTheDocument());
   });

@@ -27,41 +27,45 @@ From `omnigent/inner/terminal.py` and `omnigent/terminals/control_bridge.py` (tm
 5. **Capture** of the screen and scrollback, for idle detection, exit snapshots and tools.
 6. **Lifecycle hygiene**: orphan reaping, lockdown options, and a session that survives client disconnects.
 
-## What herdr offers (socket API, v0.9.5)
+## What herdr offers (v0.9.5, verified)
 
-| Need | herdr | Gap |
+herdr has a control mode for programmatic clients: `herdr terminal session control <pane|terminal|agent> --cols N --rows N`
+(a single writable controller; `--takeover` replaces the current one) and `herdr terminal session observe` (read-only, any number of observers).
+Verified against herdr 0.9.5 with a live Claude Code pane:
+
+| Need | herdr control mode | Result |
 |---|---|---|
-| Create | `pane.split`, `tab.create`, `workspace.create`, then run a command; `pane_exited` and `pane_closed` events | No explicit exit status in the schema (to verify) |
-| Live output | `events.subscribe` → `pane_output_changed {pane_id, revision}`; `pane.read {source, format, strip_ansi:false}` | **No raw byte stream.** Only change notifications plus snapshots |
-| Input | `pane.send_input {text, keys[]}`, `pane.send_text`, `pane.send_keys` | Arbitrary bytes and ESC sequences need a byte or hex form |
-| Size | `pane.resize {direction, amount}` (relative split ratio) | **No absolute cols × rows** |
-| Capture | `pane.read` with `visible` / `recent` / `recent_unwrapped` | Good enough |
+| Live output | stdout: NDJSON `{"type":"terminal.frame","encoding":"ansi","full":bool,"width","height","seq","bytes":<base64>}`, then `terminal.closed` | First a full frame, then incremental frames. These are herdr's ANSI redraw of the pane, not the child's raw bytes, which is fine for xterm.js |
+| Byte-exact input | stdin: `{"type":"terminal.input","bytes":<base64>}` (also `text`) | Works, including ESC sequences |
+| Absolute size | `--cols/--rows` at start, then `{"type":"terminal.resize","cols":C,"rows":R}` | The child's real PTY follows (60×15 verified). It returns to the herdr layout size on release |
+| Scroll / mouse | `terminal.scroll`, `terminal.mouse {action, button, column, row, modifiers}`, `terminal.release` | Documented; not yet exercised |
+| Create / close | socket API `pane.split`, `tab.create`, `workspace.create`, `pane.close`; events `pane_exited`, `pane_closed` | `pane_exited` carries no exit status. Omnigent's own `program_status.py --state-file` wrapper already records it, independent of the backend |
+| Capture | `pane.read {source: visible / recent / recent_unwrapped, strip_ansi: false}` | Good enough for idle detection and exit snapshots |
 | Agent state | native detection and integrations | This is the point of the backend |
+
+Known limits from the herdr tracker: control mode does not forward host appearance (light/dark, mode 2031; herdr #5158). Only
+one controller can resize at a time, and other clients see the size it chooses; a passive "watch at the desktop size" mode is
+a feature request (herdr #6095).
 
 ## Options
 
-**A. Status quo plus a herdr launcher (no Omnigent change).** Keep tmux. A wrapper opens a herdr tab that runs the tmux
-client. Full web fidelity. herdr shows the session, but agent detection is unreliable.
+**A. Status quo plus a herdr launcher (no Omnigent change).** tmux stays. herdr shows the tmux client; agent detection is unreliable.
 
-**B. Herdr backend with snapshot streaming.** A `TerminalBackend` interface, with tmux as the default and herdr as the second
-implementation. The bridge repaints the browser terminal from `pane.read(strip_ansi=false)` on each `pane_output_changed`.
-Native herdr detection and restore work. Browser fidelity drops: repaint instead of stream, no browser-driven resize,
-limited input bytes, and no scrollback streaming.
-
-**C. Herdr backend plus small herdr API additions (recommended end state).** As B, but herdr gains three generic features that
-also help any herdr API client: (1) `pane.output.subscribe`, a raw byte stream (or herdr's own control mode), (2)
-`pane.send_input {bytes_hex}` for byte-exact input, and (3) `pane.set_size {cols, rows}`, or a "detached pane"
-whose size the API client owns. With those three, the bridge can keep its current design and swap only the transport.
+**B. Herdr backend on control mode (recommended).** A `TerminalBackend` interface, with tmux as the default and herdr as the second
+implementation. The control bridge keeps its design and swaps transport: tmux `-C` `%output` becomes herdr `terminal.frame`,
+`send-keys -H` becomes `terminal.input {bytes}`, and `resize-window` becomes `terminal.resize`. The processes live in real herdr panes, so herdr's native
+detection, notifications and restore apply.
 
 ## Proposal
 
 1. **Refactor only (no behaviour change):** extract a `TerminalBackend` protocol from `TerminalInstance` and the control
    bridge (create, stream, input, resize, capture, close, exit status). tmux stays the only implementation, and the existing tests prove
    nothing changed.
-2. **Herdr backend, option B,** behind `terminal.backend: herdr` (default `tmux`), selected only when `HERDR_ENV=1` and
-   the herdr socket is reachable; otherwise fall back to tmux. Mark web fidelity as reduced in the UI.
-3. **Propose the three herdr API additions upstream to herdr.** When they are available, switch the herdr backend to streaming
-   (option C) without touching Omnigent's higher layers.
+2. **Herdr backend** behind `terminal.backend: herdr` (default `tmux`), used only when `HERDR_ENV=1` and the herdr socket
+   is reachable; otherwise fall back to tmux. One `terminal session control` process per browser-attached terminal.
+   Capture and lifecycle go through the socket API.
+3. **Follow-ups with herdr** (feature requests, not blockers): an exit status on `pane_exited`, a passive viewer size
+   (#6095), and appearance forwarding (#5158).
 
 ## Open questions
 

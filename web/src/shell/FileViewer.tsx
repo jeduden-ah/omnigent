@@ -381,6 +381,11 @@ interface FileViewerProps {
   viewport?: "desktop" | "mobile";
   /** Called after confirming unsaved edits when closing the active file tab. */
   onCloseTab?: () => void;
+  /**
+   * Registers the question a host asks before it leaves this file, while the editor has
+   * unsaved edits. It asks this viewer's own Unsaved changes dialog; returns the unregister.
+   */
+  registerLeaveGuard?: (guard: () => Promise<"leave" | "cancel">) => () => void;
   /** Set while the viewer fills the workspace full screen; Escape then exits full screen. */
   onExitFullScreen?: () => void;
   /** Called when the comments panel opens or closes inside the viewer. */
@@ -424,6 +429,7 @@ function FileViewerBody({
   path,
   onClose,
   onCloseTab,
+  registerLeaveGuard,
   onExitFullScreen,
   onNavigateTo,
   onShare,
@@ -618,6 +624,20 @@ function FileViewerBody({
     }
     action();
   }, []);
+
+  // A host leaving the file, such as a tab closing, asks the same question first.
+  useEffect(() => {
+    if (!isEditorDirty || !registerLeaveGuard) return undefined;
+    return registerLeaveGuard(
+      () =>
+        new Promise((resolve) => {
+          guardDirty(
+            () => resolve("leave"),
+            () => resolve("cancel"),
+          );
+        }),
+    );
+  }, [isEditorDirty, registerLeaveGuard, guardDirty]);
 
   useEffect(
     () => () => {

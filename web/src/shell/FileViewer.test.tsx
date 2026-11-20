@@ -14,7 +14,7 @@
 //  12. Comments are marked seen (inbox-clearing registry) only while the
 //      comments panel is open — never from merely opening the file.
 
-import { useMemo } from "react";
+import { type ComponentProps, useMemo } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
@@ -253,6 +253,7 @@ function LocationDisplay() {
 }
 
 interface RenderProps {
+  registerLeaveGuard?: ComponentProps<typeof FileViewer>["registerLeaveGuard"];
   syncUrl?: boolean;
   frameless?: boolean;
   mobileOverlay?: boolean;
@@ -306,6 +307,7 @@ function viewerTree({
   escapeCloses = false,
   onShare,
   shareDisabledReason,
+  registerLeaveGuard,
 }: RenderProps = {}) {
   const url = initialSearch ? `/?${initialSearch}` : "/";
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -330,6 +332,7 @@ function viewerTree({
           onNavigateTo={onNavigateTo}
           onShare={onShare}
           shareDisabledReason={shareDisabledReason}
+          registerLeaveGuard={registerLeaveGuard}
         />
       </MemoryRouter>
     </QueryClientProvider>
@@ -2055,6 +2058,33 @@ describe("FileViewer markdown preview/edit/source modes", () => {
     // Confirming the discard performs the deferred switch.
     fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(viewModeOf()).toBe("source");
+  });
+
+  it("asks its host's leave question while the markdown editor has unsaved edits", async () => {
+    let guard: (() => Promise<"leave" | "cancel">) | undefined;
+    const unregister = vi.fn();
+    const registerLeaveGuard = vi.fn((next: () => Promise<"leave" | "cancel">) => {
+      guard = next;
+      return unregister;
+    });
+    renderViewer({ open: true, path: "notes.md", registerLeaveGuard });
+    selectMode("Edit");
+    expect(registerLeaveGuard).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "make dirty" }));
+    expect(registerLeaveGuard).toHaveBeenCalledTimes(1);
+
+    let answer!: Promise<"leave" | "cancel">;
+    act(() => {
+      answer = guard!();
+    });
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    await expect(answer).resolves.toBe("cancel");
+    act(() => {
+      answer = guard!();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    await expect(answer).resolves.toBe("leave");
   });
 
   it("switches out of a clean markdown editor immediately, with no discard dialog", () => {

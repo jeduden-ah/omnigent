@@ -485,7 +485,7 @@ describe("PullRequestPanel", () => {
       const { client, rerender } = renderPanel(mobile);
       if (multiple) {
         await user.click(
-          await screen.findByRole("button", { name: "acme/app #6000 — chore: dummy PR" }),
+          await screen.findByRole("button", { name: "#6000 acme/app — chore: dummy PR" }),
         );
       }
       await waitFor(() => {
@@ -724,7 +724,7 @@ describe("PullRequestPanel", () => {
       expect(screen.getByRole("textbox", { name: "Pull request URL" })).toBeVisible();
       await user.click(screen.getByRole("button", { name: "Cancel" }));
       if (count > 1) {
-        await user.click(screen.getByRole("button", { name: "acme/app #6000 — chore: dummy PR" }));
+        await user.click(screen.getByRole("button", { name: "#6000 acme/app — chore: dummy PR" }));
       }
       expect(within(header).getByRole("button", { name: "Unlink PR" })).toBeEnabled();
       expect(screen.getByRole("tab", { name: "Summary" })).toBeVisible();
@@ -805,7 +805,7 @@ describe("PullRequestPanel", () => {
       queryKey: ["github-info", "conv_1"],
       stale: true,
     });
-    await user.click(screen.getByRole("button", { name: "acme/app #6000 — chore: dummy PR" }));
+    await user.click(screen.getByRole("button", { name: "#6000 acme/app — chore: dummy PR" }));
     expect(usePullRequestInfo).toHaveBeenLastCalledWith("conv_1", {
       poll: true,
       prUrl: url,
@@ -835,7 +835,7 @@ describe("PullRequestPanel", () => {
       prUrl: url,
     });
     expect(usePullRequestReadPriority).toHaveBeenLastCalledWith("conv_1", undefined);
-    await user.click(screen.getByRole("button", { name: "acme/app #6000 — chore: dummy PR" }));
+    await user.click(screen.getByRole("button", { name: "#6000 acme/app — chore: dummy PR" }));
     expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
     expect(usePullRequestInfo).toHaveBeenLastCalledWith("conv_1", {
       poll: true,
@@ -2090,7 +2090,7 @@ describe("PullRequestPanel", () => {
       expect(screen.queryByText("GitHub")).toBeNull();
       // The picker names the PR in its own provider's style; the header does not.
       expect(screen.getByRole("list", { name: "Pull requests" })).toHaveTextContent(
-        "acme/app #6000",
+        "#6000 acme/app",
       );
     });
 
@@ -2127,7 +2127,7 @@ describe("PullRequestPanel", () => {
       };
       const { rerender } = renderPanel();
       fireEvent.click(
-        screen.getByRole("button", { name: /^(?!Actions for).*contoso\/web\/app !7$/ }),
+        screen.getByRole("button", { name: /^(?!Actions for)!7 .*contoso\/web\/app$/ }),
       );
       expect(screen.getByTitle("Example Forge")).toHaveTextContent("Example Forge");
       // Mid-switch there's no request to name, and the header never named one.
@@ -2298,10 +2298,10 @@ describe("PullRequestPanel", () => {
         "Pull request URL",
       );
       const picker = screen.getByRole("list", { name: "Pull requests" });
-      expect(picker).toHaveTextContent("contoso/web/app !7 · Add the widget");
+      expect(picker).toHaveTextContent(/!7 (\S+\/)?contoso\/web\/app · Add the widget/);
       expect(
         screen.getByRole("button", {
-          name: "other.example.test/fabrikam/api/svc !12 (from branch)",
+          name: "!12 other.example.test/fabrikam/api/svc (from branch)",
         }),
       ).toBeVisible();
     });
@@ -3048,7 +3048,7 @@ describe("session PR selection", () => {
       renderPanel();
       if (reason === "read-only") {
         const user = userEvent.setup();
-        await user.click(screen.getByRole("button", { name: "Actions for example/repo #6000" }));
+        await user.click(screen.getByRole("button", { name: "Actions for #6000 example/repo" }));
         expect(screen.queryByRole("menuitem", { name: "Unlink PR" })).toBeNull();
         expect(screen.getByRole("menuitem", { name: "Copy PR link" })).toBeEnabled();
         await user.keyboard("{Escape}");
@@ -3107,16 +3107,16 @@ describe("session PR selection", () => {
       },
     };
     const { rerender } = renderPanel();
-    await user.click(screen.getByRole("button", { name: "Actions for example/two #42" }));
+    await user.click(screen.getByRole("button", { name: "Actions for #42 example/two" }));
     expect(screen.getByRole("menuitem", { name: "Open in GitHub" })).toHaveAttribute("href", two);
     await user.click(screen.getByRole("menuitem", { name: "Copy PR link" }));
     expect(await navigator.clipboard.readText()).toBe(two);
-    await user.click(screen.getByRole("button", { name: "Actions for example/two #42" }));
+    await user.click(screen.getByRole("button", { name: "Actions for #42 example/two" }));
     await user.click(screen.getByRole("menuitem", { name: "Unlink PR" }));
     expect(state.unlink.mutate).toHaveBeenCalledWith(two, expect.any(Object));
 
     expect(screen.queryByRole("tab", { name: "Summary" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "example/two #42 — Second repository" }));
+    await user.click(screen.getByRole("button", { name: "#42 example/two — Second repository" }));
     expect(usePullRequestInfo).toHaveBeenLastCalledWith("conv_1", {
       poll: true,
       prUrl: two,
@@ -3138,7 +3138,7 @@ describe("session PR selection", () => {
     );
     await user.click(screen.getByRole("button", { name: "All pull requests (2)" }));
     expect(screen.getByRole("list", { name: "Pull requests" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "example/one #42 — First repository" }));
+    await user.click(screen.getByRole("button", { name: "#42 example/one — First repository" }));
     expect(usePullRequestInfo).toHaveBeenLastCalledWith("conv_1", {
       poll: true,
       prUrl: one,
@@ -3182,11 +3182,11 @@ describe("session PR selection", () => {
     expect(within(list).getByLabelText("Pull request status: Merged")).toBeVisible();
     expect(within(list).getAllByText("Host offline")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Actions for example/one #42" }));
+    await user.click(screen.getByRole("button", { name: "Actions for #42 example/one" }));
     expect(screen.getByRole("menuitem", { name: "Open in GitHub" })).toHaveAttribute("href", one);
     await user.click(screen.getByRole("menuitem", { name: "Copy PR link" }));
     expect(await navigator.clipboard.readText()).toBe(one);
-    await user.click(screen.getByRole("button", { name: "example/one #42 — Ship it" }));
+    await user.click(screen.getByRole("button", { name: "#42 example/one — Ship it" }));
     const stored = screen.getByTestId("github-stored-pr");
     expect(within(stored).getByRole("link", { name: /Ship it/ })).toHaveAttribute("href", one);
     expect(within(stored).getByLabelText("Pull request status: Merged")).toBeInTheDocument();
@@ -3288,7 +3288,7 @@ describe("session PR selection", () => {
         expect(await screen.findByRole("tooltip")).toHaveTextContent("Last sync time:");
         await user.unhover(status);
         await user.click(
-          screen.getByRole("button", { name: "acme/app #6000 — Attached while online" }),
+          screen.getByRole("button", { name: "#6000 acme/app — Attached while online" }),
         );
       } else {
         expect(screen.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
@@ -3579,11 +3579,11 @@ describe("session PR selection", () => {
       });
       renderPanel();
       const picker = screen.getByRole("list", { name: "Pull requests" });
-      expect(screen.getByRole("button", { name: "example/one #42" })).toHaveTextContent(
-        /^example\/one #42$/,
+      expect(screen.getByRole("button", { name: "#42 example/one" })).toHaveTextContent(
+        /^#42 example\/one$/,
       );
       expect(picker).not.toHaveAttribute("title");
-      expect(screen.getByRole("button", { name: "example/one #42" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "#42 example/one" })).toBeVisible();
     },
   );
 
@@ -3606,7 +3606,7 @@ describe("session PR selection", () => {
     });
     renderPanel();
     const picker = screen.getByRole("list", { name: "Pull requests" });
-    const label = "github.example.com/example/one #42 (from branch) — Fix session selection";
+    const label = "#42 github.example.com/example/one (from branch) — Fix session selection";
     expect(picker).toHaveTextContent(label.replace(" — ", " · "));
     expect(picker).not.toHaveAttribute("title");
     expect(screen.getByRole("button", { name: label })).toBeVisible();
@@ -3849,7 +3849,7 @@ describe("a host that shows each pull request in a place of its own", () => {
     const onOpenPullRequest = vi.fn();
     renderPanel(false, true, onOpenPullRequest);
     const list = screen.getByRole("list", { name: "Pull requests" });
-    await user.click(within(list).getByRole("button", { name: "acme/app #6001" }));
+    await user.click(within(list).getByRole("button", { name: "#6001 acme/app" }));
     expect(onOpenPullRequest).toHaveBeenCalledWith(OTHER_PR.url);
     expect(screen.getByRole("list", { name: "Pull requests" })).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Summary" })).toBeNull();
@@ -3862,7 +3862,7 @@ describe("a host that shows each pull request in a place of its own", () => {
     renderPanel(false, true, onOpenPullRequest);
     const list = screen.getByRole("list", { name: "Pull requests" });
     expect(screen.queryByRole("tab", { name: "Summary" })).toBeNull();
-    await user.click(within(list).getByRole("button", { name: "acme/app #6000" }));
+    await user.click(within(list).getByRole("button", { name: "#6000 acme/app" }));
     expect(onOpenPullRequest).toHaveBeenCalledWith(FIRST.url);
   });
   it.each([
@@ -3890,7 +3890,7 @@ describe("a host that shows each pull request in a place of its own", () => {
     expect(screen.queryByRole("tab", { name: "Summary" })).toBeNull();
     const list = screen.getByRole("list", { name: "Pull requests" });
     await user.click(
-      within(list).getByRole("button", { name: /^example\.com\/acme\/app #6000 \(from branch\)/ }),
+      within(list).getByRole("button", { name: /^#6000 example\.com\/acme\/app \(from branch\)/ }),
     );
     expect(onOpenPullRequest).toHaveBeenCalledWith(url);
   });

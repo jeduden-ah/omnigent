@@ -284,8 +284,8 @@ export function PullRequestTitle({
         rel="noreferrer"
         className="flex min-w-0 items-center gap-1 text-ui font-medium hover:underline"
       >
-        <span className="truncate">{title}</span>
         <span className="shrink-0 text-muted-foreground">{numberLabel}</span>
+        <span className="truncate">{title}</span>
         <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" />
       </a>
       {editable && prUrl && (

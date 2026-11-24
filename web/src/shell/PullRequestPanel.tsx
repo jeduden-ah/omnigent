@@ -799,7 +799,7 @@ function pullRequestLabel(pr: PullRequestAssociation, sessionProvider?: string |
   const copy = gitProviderCopy(pr.provider ?? sessionProvider, undefined, pr.provider_display);
   const host = pr.host === copy.defaultHost ? "" : `${pr.host}/`;
   const inferred = pr.relationship === "inferred" ? " (from branch)" : "";
-  const identity = `${host}${pr.repository} ${copy.prNumberPrefix}${pr.number}${inferred}`;
+  const identity = `${copy.prNumberPrefix}${pr.number} ${host}${pr.repository}${inferred}`;
   const title = pr.title?.trim();
   return title ? `${identity} — ${title}` : identity;
 }
@@ -1531,11 +1531,11 @@ function StoredPullRequestDetails({
   const href = /^https:\/\//.test(pr.url) ? pr.url : undefined;
   const label = (
     <>
-      <span className="truncate">{title}</span>
       <span className="shrink-0 text-muted-foreground">
         {copy.prNumberPrefix}
         {pr.number}
       </span>
+      <span className="truncate">{title}</span>
     </>
   );
   return (

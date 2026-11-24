@@ -62,6 +62,7 @@ import { parseMentionPillTitle } from "@/lib/mentionPills";
 import {
   useFileViewer,
   useFileViewerConversationId,
+  useOpenGithubTab,
   useFolderOpener,
   useIsChangedPath,
   useWorkspacePaths,
@@ -285,6 +286,17 @@ function githubPullRequest(href: string | undefined): string | null {
   }
 }
 
+function isPlainClick(event: React.MouseEvent): boolean {
+  return (
+    !event.defaultPrevented &&
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}
+
 function PullRequestLinkLabel({ children }: { children: React.ReactNode }) {
   const words = typeof children === "string" ? children.match(/^(\S+)([\s\S]*)$/) : null;
   const prefix = (
@@ -366,6 +378,7 @@ function WorkspaceFileLink({
   } = useWorkspaceFileOpener(path, true);
   // Scopes the desktop in-app browser route to this conversation's view.
   const conversationId = useFileViewerConversationId();
+  const openGithubTab = useOpenGithubTab();
   const { root, home } = useWorkspacePaths();
 
   if (!path) {
@@ -420,6 +433,12 @@ function WorkspaceFileLink({
             ? props.onClick
             : (event) => {
                 props.onClick?.(event);
+                // A plain click on a pull request shows it in the workspace's Pull Requests view.
+                if (pullRequest && openGithubTab && isPlainClick(event)) {
+                  event.preventDefault();
+                  openGithubTab(blankHref);
+                  return;
+                }
                 followLinkWithPopupFallback(event, blankHref, conversationId);
               }
         }

@@ -92,3 +92,34 @@ it.each([{}, { metaKey: true }, { ctrlKey: true }])(
     expect(openOrNavigate).not.toHaveBeenCalled();
   },
 );
+
+const PULL_REQUEST = "https://github.com/example/repo/pull/7";
+
+function clickPullRequest(openGithubTab: (url?: string) => void, init: MouseEventInit = {}) {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <FileViewerContext.Provider value={{ ...FILE_VIEWER, openGithubTab }}>
+        <FilePathAwareMessageResponse>{`[the PR](${PULL_REQUEST})`}</FilePathAwareMessageResponse>
+      </FileViewerContext.Provider>
+    </QueryClientProvider>,
+  );
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+  screen.getByText("PR").closest("a")!.dispatchEvent(event);
+  return event;
+}
+
+it("opens a plain-clicked pull request link in the Pull Requests view", () => {
+  const openGithubTab = vi.fn();
+  expect(clickPullRequest(openGithubTab).defaultPrevented).toBe(true);
+  expect(openGithubTab).toHaveBeenCalledWith(PULL_REQUEST);
+  expect(openOrNavigate).not.toHaveBeenCalled();
+});
+
+it.each([{ metaKey: true }, { shiftKey: true }])(
+  "keeps a modified pull request click on the link path (%j)",
+  (init) => {
+    const openGithubTab = vi.fn();
+    clickPullRequest(openGithubTab, init);
+    expect(openGithubTab).not.toHaveBeenCalled();
+  },
+);

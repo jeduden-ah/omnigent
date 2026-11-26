@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PULL_REQUEST_COMMITS_LIMIT, type PullRequestCommit } from "@/hooks/usePullRequests";
+import { orderCommits, useCommitOrder } from "@/lib/commitOrderPreferences";
 
 const PR_BASE = "base";
 
@@ -44,8 +45,12 @@ export function PullRequestChangesSince({
   /** The commit list loads once the picker is first opened, and reloads after a failure. */
   onOpen: () => void;
 }) {
-  // Newest first. The head is matched by sha: a capped list may end before it.
-  const options = commits.filter((commit) => commit.sha !== headSha).reverse();
+  const [order] = useCommitOrder();
+  // The head is matched by sha: a capped list may end before it.
+  const options = orderCommits(
+    commits.filter((commit) => commit.sha !== headSha),
+    order,
+  );
   const picked = commits.find((commit) => commit.sha === sinceSha);
   return (
     <Select

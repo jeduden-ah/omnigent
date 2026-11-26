@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PULL_REQUEST_COMMITS_LIMIT, type PullRequestCommit } from "@/hooks/usePullRequests";
 import { filterCommits, PullRequestCommitsList } from "./PullRequestCommitsList";
 
@@ -51,6 +51,25 @@ describe("filterCommits", () => {
 });
 
 describe("PullRequestCommitsList", () => {
+  afterEach(() => window.localStorage.clear());
+
+  it("lists newest first by default and remembers a switch to oldest first", () => {
+    const titles = () =>
+      screen.getAllByRole("button", { name: /Add the parser|Fix the typo/ }).map((row) =>
+        row.textContent?.includes("Fix") ? "fix" : "add",
+      );
+    const { unmount } = render(<ControlledList />);
+    expect(titles()).toEqual(["fix", "add"]);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort commits" }));
+    fireEvent.click(screen.getByRole("option", { name: "Oldest first" }));
+    expect(titles()).toEqual(["add", "fix"]);
+    unmount();
+
+    render(<ControlledList />);
+    expect(titles()).toEqual(["add", "fix"]);
+  });
+
   it("searches, selects a commit by sha, and clears the search with Escape", () => {
     const onSelect = vi.fn();
     render(<ControlledList onSelect={onSelect} />);

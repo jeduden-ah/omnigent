@@ -1,9 +1,17 @@
-// The Commits view's list: the PR's commits, oldest first, with a substring search.
+// The Commits view's list: the PR's commits in the stored order, with a substring search.
 
 import { Loader2Icon } from "lucide-react";
 import { useMemo } from "react";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PULL_REQUEST_COMMITS_LIMIT, type PullRequestCommit } from "@/hooks/usePullRequests";
+import { type CommitOrder, orderCommits, useCommitOrder } from "@/lib/commitOrderPreferences";
 import { relativeTime } from "@/lib/relativeTime";
 
 /** Commits whose sha, title or author contains `query`, ignoring case. */
@@ -41,7 +49,11 @@ export function PullRequestCommitsList({
   onQueryChange: (query: string) => void;
   onSelect: (sha: string) => void;
 }) {
-  const visible = useMemo(() => filterCommits(commits, query), [commits, query]);
+  const [order, setOrder] = useCommitOrder();
+  const visible = useMemo(
+    () => orderCommits(filterCommits(commits, query), order),
+    [commits, query, order],
+  );
 
   const renderBody = () => {
     if (commits.length === 0) {
@@ -115,6 +127,15 @@ export function PullRequestCommitsList({
             {`History limited to ${PULL_REQUEST_COMMITS_LIMIT} commits`}
           </span>
         )}
+        <Select value={order} onValueChange={(value) => setOrder(value as CommitOrder)}>
+          <SelectTrigger size="sm" aria-label="Sort commits" className="ml-auto h-6 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       {errorMessage && (
         <p

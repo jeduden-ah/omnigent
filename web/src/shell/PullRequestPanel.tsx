@@ -54,7 +54,12 @@ import {
   TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
+import { getPullRequestStatus } from "@/lib/pullRequestStatus";
 import { cn } from "@/lib/utils";
+import {
+  readHideMergedPullRequests,
+  writeHideMergedPullRequests,
+} from "@/lib/pullRequestListPreferences";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "sonner";
 import { useLocalReviewNavigation } from "@/lib/localReviewContext";
@@ -67,6 +72,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -1228,6 +1234,16 @@ export function PullRequestPanel({
           },
         ]
       : prs;
+  const [hideMerged, setHideMerged] = useState(readHideMergedPullRequests);
+  const mergedCount = listedPrs.filter((pr) => getPullRequestStatus(pr) === "merged").length;
+  const visiblePrs =
+    hideMerged && mergedCount > 0
+      ? listedPrs.filter((pr) => getPullRequestStatus(pr) !== "merged")
+      : listedPrs;
+  const toggleHideMerged = (next: boolean) => {
+    setHideMerged(next);
+    writeHideMergedPullRequests(next);
+  };
   const unlinkPr = (prUrl: string) =>
     unlink.mutate(prUrl, {
       onSuccess: (remaining) => {
@@ -1409,8 +1425,19 @@ export function PullRequestPanel({
       ) : null}
       <div className="min-h-0 flex-1">
         {showsList ? (
-          <ul aria-label="Pull requests" className="h-full overflow-y-auto">
-            {listedPrs.map((pr) => (
+          <div className="flex h-full flex-col">
+            {mergedCount > 0 && (
+              <label className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1.5 text-ui text-muted-foreground">
+                <Switch
+                  checked={hideMerged}
+                  onCheckedChange={toggleHideMerged}
+                  aria-label="Hide merged pull requests"
+                />
+                Hide merged ({mergedCount})
+              </label>
+            )}
+          <ul aria-label="Pull requests" className="min-h-0 flex-1 overflow-y-auto">
+            {visiblePrs.map((pr) => (
               <PullRequestListRow
                 key={pr.url}
                 conversationId={conversationId}
@@ -1434,6 +1461,7 @@ export function PullRequestPanel({
               />
             ))}
           </ul>
+          </div>
         ) : (
           <PullRequestPanelDetails
             key={`${conversationId}:${selected ?? ""}`}

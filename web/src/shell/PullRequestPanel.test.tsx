@@ -3855,6 +3855,19 @@ describe("a host that shows each pull request in a place of its own", () => {
     expect(screen.queryByRole("tab", { name: "Summary" })).toBeNull();
   });
 
+  it("hides merged pull requests when asked, and remembers the choice", async () => {
+    const user = userEvent.setup();
+    listPrs([{ ...FIRST, state: "MERGED" }, { ...OTHER_PR, state: "OPEN" }]);
+    renderPanel(false, true, vi.fn());
+    const list = screen.getByRole("list", { name: "Pull requests" });
+    expect(within(list).getByRole("button", { name: /^#6000 / })).toBeVisible();
+    await user.click(screen.getByRole("switch", { name: "Hide merged pull requests" }));
+    expect(within(list).queryByRole("button", { name: /^#6000 / })).toBeNull();
+    expect(within(list).getByRole("button", { name: /^#6001 / })).toBeVisible();
+    expect(window.localStorage.getItem("omnigent:pull-request-list:hide-merged")).toBe("true");
+    window.localStorage.removeItem("omnigent:pull-request-list:hide-merged");
+  });
+
   it("lists a session's only pull request rather than opening it in the list's place", async () => {
     const user = userEvent.setup();
     listPrs([FIRST]);

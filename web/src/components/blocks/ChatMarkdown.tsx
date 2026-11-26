@@ -14,6 +14,7 @@ import type React from "react";
 import { useInRouterContext } from "react-router-dom";
 import { Link } from "@/lib/routing";
 import { useContext, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BotIcon,
   CopyIcon,
@@ -68,7 +69,12 @@ import {
   useWorkspacePaths,
 } from "@/shell/FileViewerContext";
 import { resolveChatFilePath, useWorkspaceFileExists } from "@/hooks/useWorkspaceChangedFiles";
-import { usePullRequestInfoSnapshot } from "@/hooks/usePullRequests";
+import {
+  type PullRequestInfo,
+  usePullRequestInfoSnapshot,
+  useUpdateSessionPr,
+} from "@/hooks/usePullRequests";
+import { pullRequestKey } from "@/lib/pullRequestReference";
 import { showToast } from "@/components/ui/toast";
 
 // Streamdown hands each component override the source hast node alongside the
@@ -379,6 +385,28 @@ function WorkspaceFileLink({
   // Scopes the desktop in-app browser route to this conversation's view.
   const conversationId = useFileViewerConversationId();
   const openGithubTab = useOpenGithubTab();
+  const queryClient = useQueryClient();
+  const linkPullRequest = useUpdateSessionPr(conversationId ?? "");
+  // The view shows only pull requests linked to the session, so link one before opening it.
+  const openPullRequest = (url: string) => {
+    if (!openGithubTab) return;
+    const linked = conversationId
+      ? queryClient
+          .getQueryData<PullRequestInfo>(["github-info", conversationId])
+          ?.prs?.find((pr) => pullRequestKey(pr.url) === pullRequestKey(url))
+      : undefined;
+    if (linked || !conversationId) {
+      openGithubTab(linked?.url ?? url);
+      return;
+    }
+    linkPullRequest.mutate(
+      { url, action: "attach" },
+      {
+        onSuccess: (info) => openGithubTab(info.selected_pr_url ?? url),
+        onError: () => window.open(url, "_blank", "noopener,noreferrer"),
+      },
+    );
+  };
   const { root, home } = useWorkspacePaths();
 
   if (!path) {
@@ -436,7 +464,7 @@ function WorkspaceFileLink({
                 // A plain click on a pull request shows it in the workspace's Pull Requests view.
                 if (pullRequest && openGithubTab && isPlainClick(event)) {
                   event.preventDefault();
-                  openGithubTab(blankHref);
+                  openPullRequest(blankHref);
                   return;
                 }
                 followLinkWithPopupFallback(event, blankHref, conversationId);
